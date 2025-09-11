@@ -33,9 +33,9 @@ Base.metadata.create_all(bind=engine)
 
 DU_RE = re.compile(r"^DID\d{13}$")
 
-@app.get("/healthz")
+@app.get("/")
 def healthz():
-    return {"ok": True}
+    return {"ok": True, "message":"You can use admin panel now."}
 
 @app.post("/api/du/update")
 def update_du(
