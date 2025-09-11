@@ -7,6 +7,9 @@ from .db import Base, engine, get_db
 from .crud import ensure_du, add_update, list_updates
 from .storage import save_file
 import re
+import os
+
+os.makedirs(settings.storage_disk_path, exist_ok=True)
 
 app = FastAPI(title="DU Backend API", version="1.0.0")
 
