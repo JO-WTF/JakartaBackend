@@ -1,4 +1,3 @@
----
 services:
   - type: web
     name: du-backend
@@ -7,34 +6,27 @@ services:
     autoDeploy: true
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: du-postgres
-          property: connectionString
+        value: "postgresql://du_postgres_user:9bewadmhevgeK3OI8dnAzRymwg6e1e9r@dpg-d30n9kvdiees7384ping-a/du_postgres?sslmode=require"
       - key: APP_ENV
         value: production
       - key: ALLOWED_ORIGINS
-        value: "*"
+        value: "*"              # 调试可用；正式建议改成你的前端域名
       - key: STORAGE_DRIVER
-        value: s3
-      - key: S3_ENDPOINT
-        value: ""
-      - key: S3_REGION
-        value: "ap-southeast-1"
-      - key: S3_BUCKET
-        value: ""
-      - key: S3_ACCESS_KEY
-        value: ""
-      - key: S3_SECRET_KEY
-        value: ""
-      - key: STORAGE_BASE_URL
-        value: ""
+        value: disk
       - key: STORAGE_DISK_PATH
-        value: "/data/uploads"
+        value: /data/uploads
     disk:
       name: uploads
       mountPath: /data
       sizeGB: 1
-    dockerCommand: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000"]
+    dockerCommand:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "10000"
+
 databases:
   - name: du-postgres
     plan: free
