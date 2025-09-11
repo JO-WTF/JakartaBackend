@@ -88,7 +88,7 @@ def search_du_updates(
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    if du_id and not re.fullmatch(r"^\d{10,20}$", du_id):
+    if du_id is not None and du_id != "" and not re.fullmatch(r"^\d{10,20}$", du_id):
         raise HTTPException(status_code=400, detail="Invalid DU ID")
 
     total, items = search_updates(
