@@ -22,7 +22,8 @@ app.add_middleware(
 )
 
 if settings.storage_driver != "s3":
-    app.mount("/uploads", StaticFiles(directory=settings.storage_disk_path), name="uploads")
+    os.makedirs(settings.storage_disk_path, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=settings.storage_disk_path, check_dir=False), name="uploads")
 
 Base.metadata.create_all(bind=engine)
 

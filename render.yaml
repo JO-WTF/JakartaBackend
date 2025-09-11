@@ -6,11 +6,13 @@ services:
     autoDeploy: true
     envVars:
       - key: DATABASE_URL
-        value: "postgresql://du_postgres_user:9bewadmhevgeK3OI8dnAzRymwg6e1e9r@dpg-d30n9kvdiees7384ping-a/du_postgres?sslmode=require"
+        fromDatabase:
+          name: du-postgres         # ← 和下面 databases.name 一致
+          property: connectionString
       - key: APP_ENV
         value: production
       - key: ALLOWED_ORIGINS
-        value: "*"              # 调试可用；正式建议改成你的前端域名
+        value: "*"
       - key: STORAGE_DRIVER
         value: disk
       - key: STORAGE_DISK_PATH
@@ -19,14 +21,8 @@ services:
       name: uploads
       mountPath: /data
       sizeGB: 1
-    dockerCommand:
-      - uvicorn
-      - app.main:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "10000"
+    dockerCommand: ["uvicorn","app.main:app","--host","0.0.0.0","--port","10000"]
 
 databases:
-  - name: du-postgres
+  - name: du-postgres               # ← 必须和上面的 name 完全一致
     plan: free
