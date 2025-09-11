@@ -47,7 +47,7 @@ def update_du(
 ):
     if not DU_RE.fullmatch(duId):
         raise HTTPException(status_code=400, detail="Invalid DU ID")
-    if status not in ("运输中", "已到达"):
+    if status not in ("运输中", "过夜", "已到达"):
         raise HTTPException(status_code=400, detail="Invalid status")
 
     ensure_du(db, duId)
