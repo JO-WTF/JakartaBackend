@@ -31,7 +31,7 @@ if settings.storage_driver != "s3":
 
 Base.metadata.create_all(bind=engine)
 
-DU_RE = re.compile(r"^\d{10,20}$")
+DU_RE = re.compile(r"^DID\d{13}$")
 
 @app.get("/healthz")
 def healthz():
@@ -62,7 +62,7 @@ def update_du(
 
 @app.get("/api/du/search")
 def search_du_updates(
-    du_id: Optional[str] = Query(None, description="精确 DU ID (10-20 位数字)"),
+    du_id: Optional[str] = Query(None, description="精确 DU ID (13位数字)"),
     status: Optional[str] = Query(None, description="运输中/已到达"),
     remark: Optional[str] = Query(None, description="备注关键词(模糊)"),
     has_photo: Optional[bool] = Query(None, description="是否必须带附件 true/false"),
@@ -72,7 +72,7 @@ def search_du_updates(
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    if du_id and not re.fullmatch(r"^\d{10,20}$", du_id):
+    if du_id and not DU_RE.fullmatch(du_id):
         raise HTTPException(status_code=400, detail=f"Invalid DU ID:{du_id}")
 
     total, items = search_updates(
