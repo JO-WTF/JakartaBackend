@@ -60,22 +60,6 @@ def update_du(
     rec = add_update(db, du_id=duId, status=status, remark=remark, photo_url=photo_url)
     return {"ok": True, "id": rec.id, "photo": photo_url}
 
-@app.get("/api/du/{du_id}")
-def get_du_updates(du_id: str, db: Session = Depends(get_db)):
-    if not DU_RE.fullmatch(du_id):
-        raise HTTPException(status_code=400, detail="Invalid DU ID")
-    items = list_updates(db, du_id)
-    return {"ok": True, "items": [
-        {
-            "id": it.id,
-            "du_id": it.du_id,
-            "status": it.status,
-            "remark": it.remark,
-            "photo_url": it.photo_url,
-            "created_at": it.created_at.isoformat() if it.created_at else None,
-        } for it in items
-    ]}
-
 @app.get("/api/du/search")
 def search_du_updates(
     du_id: Optional[str] = Query(None, description="精确 DU ID (10-20 位数字)"),
@@ -119,3 +103,19 @@ def search_du_updates(
             for it in items
         ],
     }
+
+@app.get("/api/du/{du_id}")
+def get_du_updates(du_id: str, db: Session = Depends(get_db)):
+    if not DU_RE.fullmatch(du_id):
+        raise HTTPException(status_code=400, detail="Invalid DU ID")
+    items = list_updates(db, du_id)
+    return {"ok": True, "items": [
+        {
+            "id": it.id,
+            "du_id": it.du_id,
+            "status": it.status,
+            "remark": it.remark,
+            "photo_url": it.photo_url,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+        } for it in items
+    ]}
