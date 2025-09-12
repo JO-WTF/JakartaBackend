@@ -1,7 +1,11 @@
+# crud.py
+from __future__ import annotations
+
+from typing import Optional, Iterable, Tuple, List
 from sqlalchemy.orm import Session
-from .models import DU, DUUpdate
 from sqlalchemy import and_
-from typing import Optional
+from .models import DU, DUUpdate
+
 
 def ensure_du(db: Session, du_id: str) -> DU:
     du = db.query(DU).filter(DU.du_id == du_id).one_or_none()
@@ -19,8 +23,14 @@ def add_update(db: Session, du_id: str, status: str, remark: str | None, photo_u
     db.refresh(rec)
     return rec
 
-def list_updates(db: Session, du_id: str, limit: int = 50):
-    q = db.query(DUUpdate).filter(DUUpdate.du_id == du_id).order_by(DUUpdate.created_at.desc()).limit(limit)
+
+def list_updates(db: Session, du_id: str, limit: int = 50) -> List[DUUpdate]:
+    q = (
+        db.query(DUUpdate)
+        .filter(DUUpdate.du_id == du_id)
+        .order_by(DUUpdate.created_at.desc())
+        .limit(limit)
+    )
     return q.all()
 
 def search_updates(
@@ -34,8 +44,8 @@ def search_updates(
     date_to=None,
     page: int = 1,
     page_size: int = 20,
-):
-    q = db.query(DUUpdate)
+) -> Tuple[int, List[DUUpdate]]:
+    base_q = db.query(DUUpdate)
     conds = []
     if du_id:
         conds.append(DUUpdate.du_id == du_id)
@@ -52,8 +62,84 @@ def search_updates(
     if date_to is not None:
         conds.append(DUUpdate.created_at <= date_to)
     if conds:
-        q = q.filter(and_(*conds))
+        base_q = base_q.filter(and_(*conds))
 
-    total = q.count()
-    items = q.order_by(DUUpdate.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    # 统计总数（基于未分页查询）
+    total = base_q.count()
+
+    # 分页数据
+    items = (
+        base_q.order_by(DUUpdate.created_at.desc(), DUUpdate.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return total, items
+
+def get_update_by_id(db: Session, rec_id: int) -> Optional[DUUpdate]:
+    """按主键 ID 获取单条记录"""
+    return db.query(DUUpdate).get(rec_id)  # SQLAlchemy 1.x 风格；2.x 仍兼容
+
+def update_update(
+    db: Session,
+    rec_id: int,
+    *,
+    status: Optional[str] = None,
+    remark: Optional[str] = None,
+    photo_url: Optional[str] = None,
+) -> Optional[DUUpdate]:
+    """
+    修改一条更新记录：仅更新传入的字段（None 表示不修改）
+    """
+    obj = db.query(DUUpdate).get(rec_id)
+    if not obj:
+        return None
+
+    if status is not None:
+        obj.status = status
+    if remark is not None:
+        obj.remark = remark
+    if photo_url is not None:
+        obj.photo_url = photo_url
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+def delete_update(db: Session, rec_id: int) -> bool:
+    """
+    删除一条更新记录
+    """
+    obj = db.query(DUUpdate).get(rec_id)
+    if not obj:
+        return False
+    db.delete(obj)
+    db.commit()
+    return True
+
+
+def list_updates_by_du_ids(
+    db: Session,
+    du_ids: Iterable[str],
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> Tuple[int, List[DUUpdate]]:
+    """
+    批量查询多个 DU 的更新记录，按时间倒序（其次按 id 倒序），支持分页。
+    """
+    du_ids = [x for x in {x for x in du_ids if x}]
+    if not du_ids:
+        return 0, []
+
+    base_q = db.query(DUUpdate).filter(DUUpdate.du_id.in_(du_ids))
+
+    total = base_q.count()
+    items = (
+        base_q.order_by(DUUpdate.created_at.desc(), DUUpdate.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
     return total, items
