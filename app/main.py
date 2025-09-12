@@ -221,7 +221,7 @@ def edit_update(
         photo_url = save_file(content, photo.content_type or "application/octet-stream")
 
     # 执行更新
-    rec = update_update(db, id=id, status=status, remark=remark, photo_url=photo_url)
+    rec = update_update(db, rec_id=id, status=status, remark=remark, photo_url=photo_url)
     if not rec:
         raise HTTPException(status_code=404, detail="Record not found")
 
