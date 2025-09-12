@@ -14,10 +14,21 @@ from .crud import (
     list_updates_by_du_ids, update_update, delete_update,
 )
 from .storage import save_file
+from fastapi.responses import JSONResponse
+import logging, traceback
 
 # ====== 启动与静态 ======
 os.makedirs(settings.storage_disk_path, exist_ok=True)
 app = FastAPI(title="DU Backend API", version="1.1.0")
+
+logger = logging.getLogger("uvicorn.error")
+
+@app.exception_handler(Exception)
+async def all_exception_handler(request, exc):
+    logger.error("Unhandled error on %s %s\n%s",
+                 request.method, request.url.path, traceback.format_exc())
+    return JSONResponse(status_code=500, content={"ok": False, "error": "internal_error", "errorInfo":traceback.format_exc()})
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -169,23 +180,51 @@ def batch_get_du_updates(
     }
 
 # ====== 编辑（新） ======
+from typing import Optional
+from fastapi import Body
+
 @app.put("/api/du/update/{id}")
 def edit_update(
     id: int,
+    # 方案A：multipart/form-data（和你前端 FormData 一致）
     status: Optional[str] = Form(None),
     remark: Optional[str] = Form(None),
     photo: UploadFile | None = File(None),
+    # 方案B：application/json（可选，若走 JSON 则上面三个会是 None）
+    json_body: Optional[dict] = Body(None),
     db: Session = Depends(get_db),
 ):
-    if status and status not in ("运输中", "过夜", "已到达"):
+    # 如果是 JSON 调用，取 JSON 里的字段
+    if json_body and isinstance(json_body, dict):
+        status = json_body.get("status", status)
+        remark = json_body.get("remark", remark)
+        # 不支持 JSON 方式传图片
+
+    # 容错空字符串 -> None
+    if status is not None and status.strip() == "":
+        status = None
+    if remark is not None:
+        remark = remark.strip()
+        if remark == "":
+            remark = None
+        elif len(remark) > 1000:            # 防止 DB 长度炸掉（按你的列宽调整）
+            raise HTTPException(status_code=400, detail="remark too long (max 1000 chars)")
+
+    # 状态校验（仅在用户真的传了 status 时校验）
+    if status is not None and status not in ("运输中", "过夜", "已到达"):
         raise HTTPException(status_code=400, detail="Invalid status")
+
+    # 处理可选图片
     photo_url = None
-    if photo and photo.filename:
+    if photo and getattr(photo, "filename", None):
         content = photo.file.read()
         photo_url = save_file(content, photo.content_type or "application/octet-stream")
+
+    # 执行更新
     rec = update_update(db, id=id, status=status, remark=remark, photo_url=photo_url)
     if not rec:
         raise HTTPException(status_code=404, detail="Record not found")
+
     return {"ok": True, "id": rec.id}
 
 # ====== 删除（新） ======
