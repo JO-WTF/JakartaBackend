@@ -45,7 +45,7 @@ if settings.storage_driver != "s3":
 Base.metadata.create_all(bind=engine)
 
 # ====== 校验与清洗 ======
-DU_RE = re.compile(r"^DID\d{13}$")
+DU_RE = re.compile(r"^.+$")
 
 def normalize_du(s: str) -> str:
     """NFC 规整、去零宽、全角转半角、去空白、统一大写"""
