@@ -150,6 +150,8 @@ def search_du_recordss(
                 "status": it.status,
                 "remark": it.remark,
                 "photo_url": it.photo_url,
+                "lng": it.lng if it.lng else None,
+                "lat": it.lat if it.lat else None,
                 "created_at": it.created_at.isoformat() if it.created_at else None,
             }
             for it in items
