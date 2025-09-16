@@ -91,7 +91,7 @@ def update_du(
 # ====== 多条件（单 DU 或条件）查询（原有） ======
 @app.get("/api/du/search")
 def search_du_updates(
-    du_id: Optional[str] = Query(None, description="精确 DU ID (DID+13位数字)"),
+    du_id: Optional[str] = Query(None, description="精确 DU ID"),
     status: Optional[str] = Query(None, description="运输中/过夜/已到达"),
     remark: Optional[str] = Query(None, description="备注关键词(模糊)"),
     has_photo: Optional[bool] = Query(None, description="是否必须带附件 true/false"),
@@ -150,8 +150,8 @@ def batch_get_du_updates(
             x = normalize_du(x)
             if x: flat.append(x)
 
-    # 去重与过滤占位“DID”
-    flat = [x for x in dict.fromkeys(flat) if x != "DID"]
+    # 去重与过滤空值
+    flat = [x for x in dict.fromkeys(flat) if x]
 
     if not flat:
         raise HTTPException(status_code=400, detail="Missing du_id")
