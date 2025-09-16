@@ -16,7 +16,7 @@ def ensure_du(db: Session, du_id: str) -> DU:
         db.refresh(du)
     return du
 
-def add_record(db: Session, du_id: str, status: str, remark: str | None, photo_url: str | None) -> DURecord:
+def add_record(db: Session, du_id: str, status: str, remark: str | None, photo_url: str | None, lng: str | None, lat: str | None) -> DURecord:
     rec = DURecord(du_id=du_id, status=status, remark=remark, photo_url=photo_url)
     db.add(rec)
     db.commit()
