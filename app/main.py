@@ -10,8 +10,8 @@ import re, os, unicodedata
 from .settings import settings
 from .db import Base, engine, get_db
 from .crud import (
-    ensure_du, add_update, list_updates, search_updates,
-    list_updates_by_du_ids, update_update, delete_update,
+    ensure_du, add_record, list_records, search_records,
+    list_records_by_du_ids, update_record, delete_record,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse
@@ -51,11 +51,27 @@ def normalize_du(s: str) -> str:
     """NFC 规整、去零宽、全角转半角、去空白、统一大写"""
     if not s:
         return ""
+    
+    # NFC 规整
     s = unicodedata.normalize("NFC", s)
+    
+    # 去零宽、BOM字符
     s = s.replace("\u200b", "").replace("\ufeff", "")
+    
+    # 去空白并统一为大写
     s = s.strip().upper()
+    
+    # 转换全角数字为半角
     trans = str.maketrans("０１２３４５６７８９", "0123456789")
     s = s.translate(trans)
+    
+    # 转换全角字母为半角
+    trans_fullwidth_letters = str.maketrans(
+        "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", 
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    )
+    s = s.translate(trans_fullwidth_letters)
+    
     return s
 
 # ====== 基础健康检查 ======
@@ -70,6 +86,8 @@ def update_du(
     status: str = Form(...),
     remark: str | None = Form(None),
     photo: UploadFile | None = File(None),
+    lng: str | float | None = Form(None),
+    lat: str | float | None = Form(None),
     db: Session = Depends(get_db),
 ):
     duId = normalize_du(duId)
@@ -84,14 +102,17 @@ def update_du(
     if photo and photo.filename:
         content = photo.file.read()
         photo_url = save_file(content, photo.content_type or "application/octet-stream")
+    
+    lng = str(lng) if lng else None
+    lat = str(lat) if lat else None
 
-    rec = add_update(db, du_id=duId, status=status, remark=remark, photo_url=photo_url)
+    rec = add_record(db, du_id=duId, status=status, remark=remark, photo_url=photo_url, lng=lng, lat=lat)
     return {"ok": True, "id": rec.id, "photo": photo_url}
 
 # ====== 多条件（单 DU 或条件）查询（原有） ======
 @app.get("/api/du/search")
-def search_du_updates(
-    du_id: Optional[str] = Query(None, description="精确 DU ID (DID+13位数字)"),
+def search_du_recordss(
+    du_id: Optional[str] = Query(None, description="精确 DU ID"),
     status: Optional[str] = Query(None, description="运输中/过夜/已到达"),
     remark: Optional[str] = Query(None, description="备注关键词(模糊)"),
     has_photo: Optional[bool] = Query(None, description="是否必须带附件 true/false"),
@@ -106,7 +127,7 @@ def search_du_updates(
         if not DU_RE.fullmatch(du_id):
             raise HTTPException(status_code=400, detail=f"Invalid DU ID:{du_id}")
 
-    total, items = search_updates(
+    total, items = search_records(
         db,
         du_id=du_id,
         status=status,
@@ -137,7 +158,7 @@ def search_du_updates(
 
 # ====== 批量查询（新）：支持重复 du_id 参数与逗号分隔 ======
 @app.get("/api/du/batch")
-def batch_get_du_updates(
+def batch_get_du_records(
     du_id: Optional[List[str]] = Query(None, description="重复 du_id 或逗号分隔"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -150,8 +171,8 @@ def batch_get_du_updates(
             x = normalize_du(x)
             if x: flat.append(x)
 
-    # 去重与过滤占位“DID”
-    flat = [x for x in dict.fromkeys(flat) if x != "DID"]
+    # 去重与过滤空值
+    flat = [x for x in dict.fromkeys(flat) if x]
 
     if not flat:
         raise HTTPException(status_code=400, detail="Missing du_id")
@@ -160,7 +181,7 @@ def batch_get_du_updates(
     if invalid:
         raise HTTPException(status_code=400, detail=f"Invalid DU ID(s): {', '.join(invalid)}")
 
-    total, items = list_updates_by_du_ids(db, flat, page=page, page_size=page_size)
+    total, items = list_records_by_du_ids(db, flat, page=page, page_size=page_size)
     return {
         "ok": True,
         "total": total,
@@ -173,6 +194,8 @@ def batch_get_du_updates(
                 "status": it.status,
                 "remark": it.remark,
                 "photo_url": it.photo_url,
+                "lng": it.lng,
+                "lat": it.lat,
                 "created_at": it.created_at.isoformat() if it.created_at else None,
             }
             for it in items
@@ -184,7 +207,7 @@ from typing import Optional
 from fastapi import Body
 
 @app.put("/api/du/update/{id}")
-def edit_update(
+def edit_record(
     id: int,
     # 方案A：multipart/form-data（和你前端 FormData 一致）
     status: Optional[str] = Form(None),
@@ -221,7 +244,7 @@ def edit_update(
         photo_url = save_file(content, photo.content_type or "application/octet-stream")
 
     # 执行更新
-    rec = update_update(db, rec_id=id, status=status, remark=remark, photo_url=photo_url)
+    rec = update_record(db, rec_id=id, status=status, remark=remark, photo_url=photo_url)
     if not rec:
         raise HTTPException(status_code=404, detail="Record not found")
 
@@ -229,19 +252,19 @@ def edit_update(
 
 # ====== 删除（新） ======
 @app.delete("/api/du/update/{id}")
-def remove_update(id: int, db: Session = Depends(get_db)):
-    ok = delete_update(db, id)
+def remove_record(id: int, db: Session = Depends(get_db)):
+    ok = delete_record(db, id)
     if not ok:
         raise HTTPException(status_code=404, detail="Record not found")
     return {"ok": True}
 
 # ====== 单 DU 历史列表（原有） ======
 @app.get("/api/du/{du_id}")
-def get_du_updates(du_id: str, db: Session = Depends(get_db)):
+def get_du_records(du_id: str, db: Session = Depends(get_db)):
     du_id = normalize_du(du_id)
     if not DU_RE.fullmatch(du_id):
         raise HTTPException(status_code=400, detail="Invalid DU ID")
-    items = list_updates(db, du_id)
+    items = list_records(db, du_id)
     return {"ok": True, "items": [
         {
             "id": it.id,
@@ -249,6 +272,8 @@ def get_du_updates(du_id: str, db: Session = Depends(get_db)):
             "status": it.status,
             "remark": it.remark,
             "photo_url": it.photo_url,
+            "lng": it.lng,
+            "lat": it.lat,
             "created_at": it.created_at.isoformat() if it.created_at else None,
         } for it in items
     ]}
