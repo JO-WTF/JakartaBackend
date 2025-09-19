@@ -458,7 +458,7 @@ def get_dn_stats(date: str):
         })
 
     # 输出转换后的结果
-    return RAW_ROWS
+    return {"ok": True, "data": RAW_ROWS}
 
 
 
