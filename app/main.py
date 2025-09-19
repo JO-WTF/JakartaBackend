@@ -356,7 +356,7 @@ async def get_dn_stats(date: str):
 
     # 筛选出特定日期的数据
     day_df = combined_df[combined_df["plan_mos_date"] == date]
-    day_df["status_delivery"] = day_df["status_delivery"].fillna("NO STATUS").str.upper()
+    day_df["status_delivery"] = day_df["status_delivery"].apply(lambda x: x.upper() if x else "NO STATUS")
 
     # 创建透视表
     pivot_df = day_df.groupby(["plan_mos_date", "region", "status_delivery"])["dn_number"].nunique().unstack(fill_value=0)
