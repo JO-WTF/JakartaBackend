@@ -1,5 +1,5 @@
 # app/main.py
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Query
+from fastapi import Body, FastAPI, UploadFile, File, Form, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -109,6 +109,49 @@ def update_du(
     rec = add_record(db, du_id=duId, status=status, remark=remark, photo_url=photo_url, lng=lng, lat=lat)
     return {"ok": True, "id": rec.id, "photo": photo_url}
 
+
+# ====== 批量新建多条更新（新） ======
+@app.post("/api/du/batch_update")
+def batch_update_du(
+    du_ids: List[str] = Body(..., description="JSON array of DU IDs to create"),
+    db: Session = Depends(get_db),
+):
+    if not du_ids:
+        raise HTTPException(status_code=400, detail="duId list is empty")
+
+    normalized_ids: List[str] = []
+    invalid_ids: List[str] = []
+
+    for raw_id in du_ids:
+        normalized = normalize_du(raw_id)
+        if not normalized or not DU_RE.fullmatch(normalized):
+            invalid_ids.append(raw_id)
+            continue
+        normalized_ids.append(normalized)
+
+    if invalid_ids:
+        raise HTTPException(status_code=400, detail=f"Invalid DU ID(s): {', '.join(str(x) or '<empty>' for x in invalid_ids)}")
+
+    if not normalized_ids:
+        raise HTTPException(status_code=400, detail="No valid DU ID provided")
+
+    created_items = []
+    ensured: set[str] = set()
+
+    for du_id in normalized_ids:
+        if du_id not in ensured:
+            ensure_du(db, du_id)
+            ensured.add(du_id)
+        rec = add_record(db, du_id=du_id, status="NO STATUS", remark=None, photo_url=None, lng=None, lat=None)
+        created_items.append({
+            "id": rec.id,
+            "du_id": rec.du_id,
+            "status": rec.status,
+            "created_at": rec.created_at.isoformat() if rec.created_at else None,
+        })
+
+    return {"ok": True, "items": created_items}
+
 # ====== 多条件（单 DU 或条件）查询（原有） ======
 @app.get("/api/du/search")
 def search_du_recordss(
@@ -203,9 +246,6 @@ def batch_get_du_records(
     }
 
 # ====== 编辑（新） ======
-from typing import Optional
-from fastapi import Body
-
 @app.put("/api/du/update/{id}")
 def edit_record(
     id: int,
