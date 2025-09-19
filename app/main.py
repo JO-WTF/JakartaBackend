@@ -47,6 +47,26 @@ Base.metadata.create_all(bind=engine)
 # ====== 校验与清洗 ======
 DU_RE = re.compile(r"^.+$")
 
+VALID_STATUSES: tuple[str, ...] = (
+    "PREPARE VEHICLE",
+    "ON THE WAY",
+    "ON SITE",
+    "POD",
+    "REPLAN MOS PROJECT",
+    "WAITING PIC FEEDBACK",
+    "REPLAN MOS DUE TO LSP DELAY",
+    "CLOSE BY RN",
+    "CANCEL MOS",
+    "NO STATUS",
+    "NEW MOS",
+    "开始运输",
+    "运输中",
+    "已到达",
+    "过夜",
+)
+
+VALID_STATUS_DESCRIPTION = ", ".join(VALID_STATUSES)
+
 def normalize_du(s: str) -> str:
     """NFC 规整、去零宽、全角转半角、去空白、统一大写"""
     if not s:
@@ -93,7 +113,7 @@ def update_du(
     duId = normalize_du(duId)
     if not DU_RE.fullmatch(duId):
         raise HTTPException(status_code=400, detail="Invalid DU ID")
-    if status not in ("运输中", "过夜", "已到达"):
+    if status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
 
     ensure_du(db, duId)
@@ -156,7 +176,7 @@ def batch_update_du(
 @app.get("/api/du/search")
 def search_du_recordss(
     du_id: Optional[str] = Query(None, description="精确 DU ID"),
-    status: Optional[str] = Query(None, description="运输中/过夜/已到达"),
+    status: Optional[str] = Query(None, description=f"状态过滤，可选: {VALID_STATUS_DESCRIPTION}"),
     remark: Optional[str] = Query(None, description="备注关键词(模糊)"),
     has_photo: Optional[bool] = Query(None, description="是否必须带附件 true/false"),
     date_from: Optional[datetime] = Query(None, description="起始时间(ISO 8601)"),
@@ -274,7 +294,7 @@ def edit_record(
             raise HTTPException(status_code=400, detail="remark too long (max 1000 chars)")
 
     # 状态校验（仅在用户真的传了 status 时校验）
-    if status is not None and status not in ("运输中", "过夜", "已到达"):
+    if status is not None and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
 
     # 处理可选图片
