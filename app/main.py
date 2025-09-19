@@ -282,184 +282,114 @@ def get_du_records(du_id: str, db: Session = Depends(get_db)):
         } for it in items
     ]}
 
-@app.get("/api/dn/get_stats/{date}")
-def get_dn_stats(date: str):
-    # 使用API密钥或服务账户来授权
-    gc = gspread.api_key("AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88")
 
-    # 打开Google Sheets文档
-    sh = gc.open_by_url(
-        "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
-    )
+# 设置全局变量
+API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
+MONTH_MAP = {
+    "Sept": "Sep",  # 'Sept' -> 'Sep'
+}
 
+DATE_FORMATS = [
+    "%d %b %y", "%d %b %Y", "%d-%b-%Y", "%d-%b-%y", "%d%b", "%d %b %y", "%d %b %Y"
+]
 
-    # 获取以"Plan"开头的所有工作表
-    def fetch_plan_sheets(sheet_url):
-        """
-        从给定的 Google Sheet 文档中获取以 "Plan" 开头的工作表。
-        """
-        sheets = sheet_url.worksheets()
-        return [sheet for sheet in sheets if sheet.title.startswith("Plan MOS")]
+def fetch_plan_sheets(sheet_url):
+    """获取以 'Plan MOS' 开头的所有工作表"""
+    sheets = sheet_url.worksheets()
+    return [sheet for sheet in sheets if sheet.title.startswith("Plan MOS")]
+
+def parse_date(date_str: str):
+    """解析日期字符串"""
+    current_year = datetime.now().year
     
+    # 替换月份简写
+    for incorrect, correct in MONTH_MAP.items():
+        date_str = date_str.replace(incorrect, correct)
 
+    # 处理日期字符串
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(date_str.strip(), fmt)
+        except ValueError:
+            continue
 
-    def parse_date(date_str):
-        # 获取当前年份
-        current_year = datetime.now().year
+    return date_str
 
-        # 月份简写标准化映射
-        month_map = {
-            "Sept": "Sep",  # 'Sept' -> 'Sep'
-        }
-
-        # 替换月份简写
-        for incorrect, correct in month_map.items():
-            date_str = date_str.replace(incorrect, correct)
-
-        # 定义所有支持的日期格式，去除重复项
-        date_formats = [
-            "%d %b %y",  # '01 Sep 25', '02 Sep 25', ... (适用于所有类似 'DD MMM YY' 格式)
-            "%d %b %Y",  # '1-Sep-2025', '2-Sep-2025', ... (适用于 'D-MMM-YYYY' 格式)
-            "%d-%b-%Y",  # '1-Sep-2025', '2-Sep-2025', ... (适用于 'D-MMM-YYYY' 格式)
-            "%d-%b-%y",  # '1-Sep-25', '2-Sep-25', ... (适用于 'D-MMM-YYYY' 格式)
-            "%d%b",  # '4Sep', '9Sep' (适用于没有空格的日期格式)
-            "%d %b %y",  # '29 Aug 25', '30 Aug 25', '31 Aug 25'
-            "%d %b %Y",  # '1-Sep-2025'，'10-Sep-2025'，等等
+def process_sheet_data(sheet) -> pd.DataFrame:
+    """处理工作表数据"""
+    data = sheet.get_all_values()[3:]  # 从第4行开始
+    data = [row[:32] for row in data]  # 取前32列
+    df = pd.DataFrame(
+        data,
+        columns=[
+            "dn_number", "du_id", "status_wh", "lsp", "area", "mos_given_time", "expected_arrival_time_from_project", 
+            "project_request", "distance_poll_mover_to_site", "driver_contact_name", "driver_contact_number", 
+            "delivery_type_a_to_b", "transportation_time", "estimate_depart_from_start_point_etd", 
+            "estimate_arrive_sites_time_eta", "lsp_tracker", "hw_tracker", "actual_depart_from_start_point_atd", 
+            "actual_arrive_time_ata", "subcon", "subcon_receiver_contact_number", "status_delivery", "issue_remark", 
+            "mos_attempt_1st_time", "mos_attempt_2nd_time", "mos_attempt_3rd_time", "mos_attempt_4th_time", 
+            "mos_attempt_5th_time", "mos_attempt_6th_time", "mos_type", "region", "plan_mos_date",
         ]
+    )
+    return df
 
-        # 去除多余的空格
-        date_str = date_str.strip()
-
-        # 如果日期字符串为空，返回 原值
-        if not date_str:
-            return date_str
-
-        for fmt in date_formats:
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-
-        # 如果所有格式都无法匹配，返回 原值
-        return date_str
-
-
-    # 处理并格式化每个工作表的数据
-    def process_sheet_data(sheet):
-        """
-        处理单个工作表的数据：读取并清洗，转换成 pandas DataFrame 格式。
-        """
-        data = sheet.get_all_values()[3:]  # 从第4行开始获取数据
-        print(len(data))
-        data = [row[:32] for row in data]  # 只取前32列
-        df = pd.DataFrame(
-            data,
-            columns=[
-                "dn_number",
-                "du_id",
-                "status_wh",
-                "lsp",
-                "area",
-                "mos_given_time",
-                "expected_arrival_time_from_project",
-                "project_request",
-                "distance_poll_mover_to_site",
-                "driver_contact_name",
-                "driver_contact_number",
-                "delivery_type_a_to_b",
-                "transportation_time",
-                "estimate_depart_from_start_point_etd",
-                "estimate_arrive_sites_time_eta",
-                "lsp_tracker",
-                "hw_tracker",
-                "actual_depart_from_start_point_atd",
-                "actual_arrive_time_ata",
-                "subcon",
-                "subcon_receiver_contact_number",
-                "status_delivery",
-                "issue_remark",
-                "mos_attempt_1st_time",
-                "mos_attempt_2nd_time",
-                "mos_attempt_3rd_time",
-                "mos_attempt_4th_time",
-                "mos_attempt_5th_time",
-                "mos_attempt_6th_time",
-                "mos_type",
-                "region",
-                "plan_mos_date",
-            ],
-        )
-        return df
-
-
-    # 主函数：获取所有工作表数据并合并
-    # 获取所有符合条件的工作表
+def process_all_sheets(sh) -> pd.DataFrame:
+    """处理所有符合条件的工作表并合并数据"""
     plan_sheets = fetch_plan_sheets(sh)
+    all_data = [process_sheet_data(sheet) for sheet in plan_sheets]
+    return pd.concat(all_data, ignore_index=True)
 
-    # 遍历所有筛选出的工作表，并处理数据
-    all_data = []
-    for sheet in plan_sheets:
-        print(f"Processing sheet: {sheet.title}")
-        sheet_data = process_sheet_data(sheet)
-        all_data.append(sheet_data)
+@app.get("/api/dn/stats/{date}")
+async def get_dn_stats(date: str):
+    # 初始化Google Sheets客户端
+    gc = gspread.api_key(API_KEY)
+    sh = gc.open_by_url(SPREADSHEET_URL)
 
-    # 合并所有工作表的数据
-    combined_df = pd.concat(all_data, ignore_index=True)
-    combined_df.to_csv("df.csv", encoding="utf-8_sig")
-    # print(combined_df.plan_mos_date.unique())
+    # 获取所有工作表数据
+    combined_df = process_all_sheets(sh)
+
+    # 处理日期列
     combined_df["plan_mos_date"] = combined_df["plan_mos_date"].apply(
-        lambda x: parse_date(x).strftime("%d %b %y") if parse_date(x) else x
+        lambda x: parse_date(x).strftime("%d-%b-%y") if parse_date(x) else x
     )
 
-    # combined_df = combined_df.drop_duplicates(subset=["dn_number"], keep="last")
+    # 筛选出特定日期的数据
     day_df = combined_df[combined_df["plan_mos_date"] == date]
-    day_df["status_delivery"] = day_df["status_delivery"].apply(lambda x: x if x else "NO STATUS")
-    day_df["status_delivery"] = day_df["status_delivery"].str.upper()
+    day_df["status_delivery"] = day_df["status_delivery"].apply(lambda x: x.upper() if x else "NO STATUS")
 
-    # 创建透视表（by dn_number or du_id ）
+    # 创建透视表
     pivot_df = day_df.groupby(["plan_mos_date", "region", "status_delivery"])["dn_number"].nunique().unstack(fill_value=0)
 
     # 所有可能的状态值
     all_statuses = [
-        "PREPARE VEHICLE",
-        "ON THE WAY",
-        "ON SITE",
-        "POD",
-        "REPLAN MOS PROJECT",
-        "WAITING PIC FEEDBACK",
-        "REPLAN MOS DUE TO LSP DELAY",
-        "CLOSE BY RN",
-        "CANCEL MOS",
-        "NO STATUS"
+        "PREPARE VEHICLE", "ON THE WAY", "ON SITE", "POD", "REPLAN MOS PROJECT", "WAITING PIC FEEDBACK", 
+        "REPLAN MOS DUE TO LSP DELAY", "CLOSE BY RN", "CANCEL MOS", "NO STATUS"
     ]
+
+    # 补充状态值
     extra = list(set(pivot_df.columns.tolist()) - set(all_statuses))
-    final_statuses = all_statuses + list(extra)
+    final_statuses = all_statuses + extra
 
-    # 对状态列进行重新索引
+    # 重新索引并添加总计列
     pivot_df = pivot_df.reindex(columns=final_statuses, fill_value=0)
-
-    # 添加横向总计（按行总和）
     pivot_df["Total"] = pivot_df.sum(axis=1)
 
+    # 转换为最终表格格式
     table_df = pivot_df.reset_index()
-    table_df.columns = ["date", "group"]+table_df.columns.to_list()[2:]
-    # 转换格式
-    RAW_ROWS = []
+    table_df.columns = ["date", "group"] + table_df.columns.to_list()[2:]
 
-    # 遍历每一行（每个区域的数据）
-    for _, row in table_df.iterrows():
-        # 提取状态值（去掉 Total 列）
-        values = list(row)[2:]
-        # 构建字典并加入 RAW_ROWS
-        RAW_ROWS.append({
+    # 转换为所需的格式
+    raw_rows = [
+        {
             'group': row['group'],
             'date': row['date'],
-            'values': values
-        })
+            'values': list(row)[2:]
+        }
+        for _, row in table_df.iterrows()
+    ]
 
-    # 输出转换后的结果
-    return RAW_ROWS
-
+    return {"ok": True, "data": raw_rows}
 
 
 # 可选：支持 python -m app.main 本地跑，避免相对导入报错
