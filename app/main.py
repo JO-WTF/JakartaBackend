@@ -455,7 +455,7 @@ def update_dn(
         if not DU_RE.fullmatch(du_id_normalized):
             raise HTTPException(status_code=400, detail="Invalid DU ID")
 
-    ensure_dn(db, dn_number)
+    ensure_dn(db, dn_number, du_id=du_id_normalized)
     if du_id_normalized:
         ensure_du(db, du_id_normalized)
 

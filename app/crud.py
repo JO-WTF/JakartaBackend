@@ -156,13 +156,28 @@ def get_existing_du_ids(db: Session, du_ids: Iterable[str]) -> Set[str]:
     return {row[0] for row in rows}
 
 
-def ensure_dn(db: Session, dn_number: str) -> DN:
+def ensure_dn(db: Session, dn_number: str, **fields: str | None) -> DN:
     dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
     if not dn:
-        dn = DN(dn_number=dn_number)
+        dn = DN(dn_number=dn_number, **{k: v for k, v in fields.items() if v is not None})
         db.add(dn)
         db.commit()
         db.refresh(dn)
+        return dn
+
+    updated = False
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if getattr(dn, key, None) != value:
+            setattr(dn, key, value)
+            updated = True
+
+    if updated:
+        db.add(dn)
+        db.commit()
+        db.refresh(dn)
+
     return dn
 
 
