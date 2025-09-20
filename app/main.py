@@ -27,6 +27,7 @@ from .crud import (
     delete_dn_record,
     get_existing_dn_numbers,
     get_latest_dn_records_map,
+    search_dn_list,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse
@@ -992,6 +993,77 @@ async def get_dn_list(db: Session = Depends(get_db)):
         data.append(row)
 
     return {"ok": True, "data": data}
+
+
+@app.get("/api/dn/list/search")
+def search_dn_list_api(
+    date: str | None = Query(None, description="Plan MOS date"),
+    dnnumber: str | None = Query(None, description="DN number"),
+    status: str | None = Query(None, description="Status delivery"),
+    lsp: str | None = Query(None, description="LSP"),
+    region: str | None = Query(None, description="Region"),
+    project: str | None = Query(None, description="Project request"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    plan_date = date.strip() if date else None
+    dn_number = normalize_dn(dnnumber) if dnnumber else None
+    if dn_number and not DN_RE.fullmatch(dn_number):
+        raise HTTPException(status_code=400, detail="Invalid DN number")
+
+    total, items = search_dn_list(
+        db,
+        plan_mos_date=plan_date,
+        dn_number=dn_number,
+        status_delivery=status.strip() if status else None,
+        lsp=lsp.strip() if lsp else None,
+        region=region.strip() if region else None,
+        project_request=project.strip() if project else None,
+        page=page,
+        page_size=page_size,
+    )
+
+    if not items:
+        return {
+            "ok": True,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": [],
+        }
+
+    latest_records = get_latest_dn_records_map(db, [it.dn_number for it in items])
+
+    data: list[dict[str, Any]] = []
+    for it in items:
+        row: dict[str, Any] = {
+            "id": it.id,
+            "dn_number": it.dn_number,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "status": it.status,
+            "remark": it.remark,
+            "photo_url": it.photo_url,
+            "lng": it.lng,
+            "lat": it.lat,
+        }
+        for column in SHEET_COLUMNS:
+            if column == "dn_number":
+                continue
+            row[column] = getattr(it, column)
+        latest = latest_records.get(it.dn_number)
+        row["latest_record_created_at"] = (
+            latest.created_at.isoformat() if latest and latest.created_at else None
+        )
+        data.append(row)
+
+    return {
+        "ok": True,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": data,
+    }
 
 
 @app.get("/api/dn/{dn_number}")

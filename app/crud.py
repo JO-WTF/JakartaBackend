@@ -368,3 +368,44 @@ def get_latest_dn_records_map(db: Session, dn_numbers: Iterable[str]) -> Dict[st
             if len(latest) == len(unique_numbers):
                 break
     return latest
+
+
+def search_dn_list(
+    db: Session,
+    *,
+    plan_mos_date: str | None = None,
+    dn_number: str | None = None,
+    status_delivery: str | None = None,
+    lsp: str | None = None,
+    region: str | None = None,
+    project_request: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> Tuple[int, List[DN]]:
+    base_q = db.query(DN)
+    conds = []
+
+    if plan_mos_date:
+        conds.append(DN.plan_mos_date == plan_mos_date)
+    if dn_number:
+        conds.append(DN.dn_number == dn_number)
+    if status_delivery:
+        conds.append(DN.status_delivery == status_delivery)
+    if lsp:
+        conds.append(DN.lsp == lsp)
+    if region:
+        conds.append(DN.region == region)
+    if project_request:
+        conds.append(DN.project_request == project_request)
+
+    if conds:
+        base_q = base_q.filter(and_(*conds))
+
+    total = base_q.count()
+    items = (
+        base_q.order_by(DN.created_at.desc(), DN.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return total, items
