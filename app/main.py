@@ -26,12 +26,14 @@ from .crud import (
     update_dn_record,
     delete_dn_record,
     get_existing_dn_numbers,
+    get_latest_dn_records_map,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse
 import logging, traceback
 import gspread
 import pandas as pd
+from .models import DN
 
 # ====== 启动与静态 ======
 os.makedirs(settings.storage_disk_path, exist_ok=True)
@@ -467,6 +469,7 @@ def update_dn(
         db,
         dn_number,
         du_id=du_id_normalized,
+        status=status,
         remark=remark,
         photo_url=photo_url,
         lng=lng_val,
@@ -531,7 +534,7 @@ def batch_update_dn(
             add_failure(number, "DN number 已存在")
             continue
 
-        ensure_dn(db, number)
+        ensure_dn(db, number, status="NO STATUS")
         add_dn_record(
             db,
             dn_number=number,
@@ -724,6 +727,17 @@ def edit_dn_record(
     if not rec:
         raise HTTPException(status_code=404, detail="Record not found")
 
+    ensure_dn(
+        db,
+        rec.dn_number,
+        du_id=rec.du_id,
+        status=rec.status,
+        remark=rec.remark,
+        photo_url=rec.photo_url,
+        lng=rec.lng,
+        lat=rec.lat,
+    )
+
     return {"ok": True, "id": rec.id}
 
 
@@ -835,6 +849,65 @@ def normalize_sheet_value(value: Any) -> Any:
         return None
     return value
 
+
+def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None) -> List[str]:
+    """同步 Google Sheet 中的 DN 数据到数据库。
+
+    返回成功同步的 DN number 列表（按字典序升序）。
+    """
+    log = logger_obj or logger
+
+    try:
+        gc = gspread.api_key(API_KEY)
+        sh = gc.open_by_url(SPREADSHEET_URL)
+        combined_df = process_all_sheets(sh)
+    except Exception as exc:
+        if log:
+            log.exception("Failed to fetch DN sheet data: %s", exc)
+        raise
+
+    records: List[dict[str, Any]] = []
+    dn_numbers: set[str] = set()
+
+    if not combined_df.empty:
+        for record in combined_df.to_dict(orient="records"):
+            cleaned = {key: normalize_sheet_value(value) for key, value in record.items()}
+            raw_number = cleaned.get("dn_number")
+            raw_number_str = str(raw_number).strip() if raw_number is not None else ""
+            normalized_number = normalize_dn(raw_number_str) if raw_number_str else ""
+            if not normalized_number:
+                continue
+            cleaned["dn_number"] = normalized_number
+            if all(value is None for key, value in cleaned.items() if key != "dn_number"):
+                continue
+            records.append(cleaned)
+            dn_numbers.add(normalized_number)
+
+    if not dn_numbers:
+        return []
+
+    latest_records_for_update = get_latest_dn_records_map(db, dn_numbers)
+
+    for entry in records:
+        number = entry["dn_number"]
+        sheet_fields = {key: entry.get(key) for key in SHEET_COLUMNS if key != "dn_number"}
+        latest = latest_records_for_update.get(number)
+        if latest:
+            if not sheet_fields.get("du_id") and latest.du_id:
+                sheet_fields["du_id"] = latest.du_id
+            sheet_fields.update(
+                {
+                    "status": latest.status,
+                    "remark": latest.remark,
+                    "photo_url": latest.photo_url,
+                    "lng": latest.lng,
+                    "lat": latest.lat,
+                }
+            )
+        ensure_dn(db, number, **sheet_fields)
+
+    return sorted(dn_numbers)
+
 @app.get("/api/dn/stats/{date}")
 async def get_dn_stats(date: str):
     # 初始化Google Sheets客户端
@@ -888,26 +961,37 @@ async def get_dn_stats(date: str):
 
 
 @app.get("/api/dn/list")
-async def get_dn_list():
-    try:
-        gc = gspread.api_key(API_KEY)
-        sh = gc.open_by_url(SPREADSHEET_URL)
-        combined_df = process_all_sheets(sh)
-    except Exception as exc:
-        logger.exception("Failed to fetch DN list: %s", exc)
-        return {"ok": False, "errMsg": "Failed to fetch DN list"}
+async def get_dn_list(db: Session = Depends(get_db)):
+    items = db.query(DN).order_by(DN.dn_number.asc()).all()
 
-    if combined_df.empty:
+    if not items:
         return {"ok": True, "data": []}
 
-    records: List[dict[str, Any]] = []
-    for record in combined_df.to_dict(orient="records"):
-        cleaned = {key: normalize_sheet_value(value) for key, value in record.items()}
-        if all(value is None for value in cleaned.values()):
-            continue
-        records.append(cleaned)
+    latest_records = get_latest_dn_records_map(db, [it.dn_number for it in items])
 
-    return {"ok": True, "data": records}
+    data: List[dict[str, Any]] = []
+    for it in items:
+        row: dict[str, Any] = {
+            "id": it.id,
+            "dn_number": it.dn_number,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "status": it.status,
+            "remark": it.remark,
+            "photo_url": it.photo_url,
+            "lng": it.lng,
+            "lat": it.lat,
+        }
+        for column in SHEET_COLUMNS:
+            if column == "dn_number":
+                continue
+            row[column] = getattr(it, column)
+        latest = latest_records.get(it.dn_number)
+        row["latest_record_created_at"] = (
+            latest.created_at.isoformat() if latest and latest.created_at else None
+        )
+        data.append(row)
+
+    return {"ok": True, "data": data}
 
 
 @app.get("/api/dn/{dn_number}")
