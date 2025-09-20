@@ -3,7 +3,7 @@ from fastapi import Body, FastAPI, UploadFile, File, Form, Depends, HTTPExceptio
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 import re, os, unicodedata
 
@@ -416,6 +416,42 @@ def get_du_records(du_id: str, db: Session = Depends(get_db)):
 # 设置全局变量
 API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
+
+SHEET_COLUMNS: List[str] = [
+    "dn_number",
+    "du_id",
+    "status_wh",
+    "lsp",
+    "area",
+    "mos_given_time",
+    "expected_arrival_time_from_project",
+    "project_request",
+    "distance_poll_mover_to_site",
+    "driver_contact_name",
+    "driver_contact_number",
+    "delivery_type_a_to_b",
+    "transportation_time",
+    "estimate_depart_from_start_point_etd",
+    "estimate_arrive_sites_time_eta",
+    "lsp_tracker",
+    "hw_tracker",
+    "actual_depart_from_start_point_atd",
+    "actual_arrive_time_ata",
+    "subcon",
+    "subcon_receiver_contact_number",
+    "status_delivery",
+    "issue_remark",
+    "mos_attempt_1st_time",
+    "mos_attempt_2nd_time",
+    "mos_attempt_3rd_time",
+    "mos_attempt_4th_time",
+    "mos_attempt_5th_time",
+    "mos_attempt_6th_time",
+    "mos_type",
+    "region",
+    "plan_mos_date",
+]
+
 MONTH_MAP = {
     "Sept": "Sep",  # 'Sept' -> 'Sep'
 }
@@ -449,26 +485,33 @@ def parse_date(date_str: str):
 def process_sheet_data(sheet) -> pd.DataFrame:
     """处理工作表数据"""
     data = sheet.get_all_values()[3:]  # 从第4行开始
-    data = [row[:32] for row in data]  # 取前32列
-    df = pd.DataFrame(
-        data,
-        columns=[
-            "dn_number", "du_id", "status_wh", "lsp", "area", "mos_given_time", "expected_arrival_time_from_project", 
-            "project_request", "distance_poll_mover_to_site", "driver_contact_name", "driver_contact_number", 
-            "delivery_type_a_to_b", "transportation_time", "estimate_depart_from_start_point_etd", 
-            "estimate_arrive_sites_time_eta", "lsp_tracker", "hw_tracker", "actual_depart_from_start_point_atd", 
-            "actual_arrive_time_ata", "subcon", "subcon_receiver_contact_number", "status_delivery", "issue_remark", 
-            "mos_attempt_1st_time", "mos_attempt_2nd_time", "mos_attempt_3rd_time", "mos_attempt_4th_time", 
-            "mos_attempt_5th_time", "mos_attempt_6th_time", "mos_type", "region", "plan_mos_date",
-        ]
-    )
+    trimmed: List[List[str]] = []
+    column_count = len(SHEET_COLUMNS)
+    for row in data:
+        row_values = row[:column_count]
+        if len(row_values) < column_count:
+            row_values = row_values + [""] * (column_count - len(row_values))
+        trimmed.append(row_values)
+
+    df = pd.DataFrame(trimmed, columns=SHEET_COLUMNS)
     return df
 
 def process_all_sheets(sh) -> pd.DataFrame:
     """处理所有符合条件的工作表并合并数据"""
     plan_sheets = fetch_plan_sheets(sh)
     all_data = [process_sheet_data(sheet) for sheet in plan_sheets]
+    if not all_data:
+        return pd.DataFrame(columns=SHEET_COLUMNS)
     return pd.concat(all_data, ignore_index=True)
+
+
+def normalize_sheet_value(value: Any) -> Any:
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    if pd.isna(value):
+        return None
+    return value
 
 @app.get("/api/dn/stats/{date}")
 async def get_dn_stats(date: str):
@@ -520,6 +563,29 @@ async def get_dn_stats(date: str):
     ]
 
     return {"ok": True, "data": raw_rows}
+
+
+@app.get("/api/dn/list")
+async def get_dn_list():
+    try:
+        gc = gspread.api_key(API_KEY)
+        sh = gc.open_by_url(SPREADSHEET_URL)
+        combined_df = process_all_sheets(sh)
+    except Exception as exc:
+        logger.exception("Failed to fetch DN list: %s", exc)
+        return {"ok": False, "errMsg": "Failed to fetch DN list"}
+
+    if combined_df.empty:
+        return {"ok": True, "data": []}
+
+    records: List[dict[str, Any]] = []
+    for record in combined_df.to_dict(orient="records"):
+        cleaned = {key: normalize_sheet_value(value) for key, value in record.items()}
+        if all(value is None for value in cleaned.values()):
+            continue
+        records.append(cleaned)
+
+    return {"ok": True, "data": records}
 
 
 # 可选：支持 python -m app.main 本地跑，避免相对导入报错
