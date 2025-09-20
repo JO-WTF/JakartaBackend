@@ -1,7 +1,7 @@
 # crud.py
 from __future__ import annotations
 
-from typing import Optional, Iterable, Tuple, List
+from typing import Optional, Iterable, Tuple, List, Set
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from .models import DU, DURecord
@@ -143,3 +143,14 @@ def list_records_by_du_ids(
         .all()
     )
     return total, items
+
+
+def get_existing_du_ids(db: Session, du_ids: Iterable[str]) -> Set[str]:
+    """批量查询数据库中已存在的 DU ID 列表"""
+
+    unique_ids = {du_id for du_id in du_ids if du_id}
+    if not unique_ids:
+        return set()
+
+    rows = db.query(DU.du_id).filter(DU.du_id.in_(unique_ids)).all()
+    return {row[0] for row in rows}

@@ -12,6 +12,7 @@ from .db import Base, engine, get_db
 from .crud import (
     ensure_du, add_record, list_records, search_records,
     list_records_by_du_ids, update_record, delete_record,
+    get_existing_du_ids,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse
@@ -138,41 +139,110 @@ def batch_update_du(
     du_ids: List[str] = Body(..., description="JSON array of DU IDs to create"),
     db: Session = Depends(get_db),
 ):
+    """批量创建 DU 默认状态记录。
+
+    **请求体格式**::
+
+        {
+            "du_ids": ["DU0001", "DU0002"]
+        }
+
+    **成功返回示例**（部分成功亦属于 OK）::
+
+        {
+            "status": "ok",
+            "success_count": 2,
+            "failure_count": 1,
+            "success_duids": ["DU0001", "DU0002"],
+            "failure_details": {
+                "DU0003": "DU ID 已存在"
+            }
+        }
+
+    **完全失败示例**::
+
+        {
+            "status": "fail",
+            "success_count": 0,
+            "failure_count": 2,
+            "success_duids": [],
+            "failure_details": {
+                "<empty>": "无效的 DU ID",
+                "DU0003": "DU ID 已存在"
+            }
+        }
+
+    **当 du_ids 为空时**::
+
+        {
+            "status": "fail",
+            "errmessage": "DU ID 列表为空",
+            "success_count": 0,
+            "failure_count": 0,
+            "success_duids": [],
+            "failure_details": {}
+        }
+
+    返回字段说明：
+        * status 为 "ok" 表示至少有一条新增成功，否则为 "fail"；
+        * success_count / failure_count 分别为成功、失败的 DU 数量；
+        * success_duids 列举成功写入的 DU ID；
+        * failure_details 以字典形式列举失败的 DU ID 及原因。
+    """
+
     if not du_ids:
-        raise HTTPException(status_code=400, detail="duId list is empty")
+        return {
+            "status": "fail",
+            "errmessage": "DU ID 列表为空",
+            "success_count": 0,
+            "failure_count": 0,
+            "success_duids": [],
+            "failure_details": {},
+        }
 
     normalized_ids: List[str] = []
-    invalid_ids: List[str] = []
+    failure_details: dict[str, str] = {}
+    seen_ids: set[str] = set()
+
+    def add_failure(duid: str, reason: str) -> None:
+        failure_details[duid] = reason
 
     for raw_id in du_ids:
         normalized = normalize_du(raw_id)
         if not normalized or not DU_RE.fullmatch(normalized):
-            invalid_ids.append(raw_id)
+            base_key = raw_id if isinstance(raw_id, str) and raw_id else "<empty>"
+            failure_key = str(base_key) if base_key is not None else "<empty>"
+            add_failure(failure_key, "无效的 DU ID")
             continue
+        if normalized in seen_ids:
+            add_failure(normalized, "请求中重复")
+            continue
+        seen_ids.add(normalized)
         normalized_ids.append(normalized)
 
-    if invalid_ids:
-        raise HTTPException(status_code=400, detail=f"Invalid DU ID(s): {', '.join(str(x) or '<empty>' for x in invalid_ids)}")
-
-    if not normalized_ids:
-        raise HTTPException(status_code=400, detail="No valid DU ID provided")
-
-    created_items = []
-    ensured: set[str] = set()
+    existing_du_ids = get_existing_du_ids(db, normalized_ids)
+    success_duids: List[str] = []
 
     for du_id in normalized_ids:
-        if du_id not in ensured:
-            ensure_du(db, du_id)
-            ensured.add(du_id)
-        rec = add_record(db, du_id=du_id, status="NO STATUS", remark=None, photo_url=None, lng=None, lat=None)
-        created_items.append({
-            "id": rec.id,
-            "du_id": rec.du_id,
-            "status": rec.status,
-            "created_at": rec.created_at.isoformat() if rec.created_at else None,
-        })
+        if du_id in existing_du_ids:
+            add_failure(du_id, "DU ID 已存在")
+            continue
 
-    return {"ok": True, "items": created_items}
+        ensure_du(db, du_id)
+        add_record(db, du_id=du_id, status="NO STATUS", remark=None, photo_url=None, lng=None, lat=None)
+        success_duids.append(du_id)
+
+    status = "ok" if success_duids else "fail"
+
+    response = {
+        "status": status,
+        "success_count": len(success_duids),
+        "failure_count": len(failure_details),
+        "success_duids": success_duids,
+        "failure_details": failure_details,
+    }
+
+    return response
 
 # ====== 多条件（单 DU 或条件）查询（原有） ======
 @app.get("/api/du/search")
