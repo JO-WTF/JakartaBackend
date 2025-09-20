@@ -24,6 +24,7 @@ class DN(Base):
     id = Column(Integer, primary_key=True, index=True)
     dn_number = Column(String(64), unique=True, index=True, nullable=False)
     du_id = Column(String(64), nullable=True)
+    status = Column(String(64), nullable=True)
     remark = Column(Text, nullable=True)
     photo_url = Column(Text, nullable=True)
     lng = Column(String(20), nullable=True)
