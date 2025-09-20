@@ -455,10 +455,6 @@ def update_dn(
         if not DU_RE.fullmatch(du_id_normalized):
             raise HTTPException(status_code=400, detail="Invalid DU ID")
 
-    ensure_dn(db, dn_number, du_id=du_id_normalized)
-    if du_id_normalized:
-        ensure_du(db, du_id_normalized)
-
     photo_url = None
     if photo and photo.filename:
         content = photo.file.read()
@@ -466,6 +462,18 @@ def update_dn(
 
     lng_val = str(lng) if lng else None
     lat_val = str(lat) if lat else None
+
+    ensure_dn(
+        db,
+        dn_number,
+        du_id=du_id_normalized,
+        remark=remark,
+        photo_url=photo_url,
+        lng=lng_val,
+        lat=lat_val,
+    )
+    if du_id_normalized:
+        ensure_du(db, du_id_normalized)
 
     rec = add_dn_record(
         db,
