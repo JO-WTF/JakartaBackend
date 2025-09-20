@@ -4,11 +4,12 @@ from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+import asyncio
 import re, os, unicodedata
 
 from .settings import settings
-from .db import Base, engine, get_db
+from .db import Base, engine, get_db, SessionLocal
 from .crud import (
     ensure_du,
     add_record,
@@ -31,6 +32,8 @@ from .crud import (
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 import logging, traceback
 import gspread
 import pandas as pd
@@ -41,6 +44,10 @@ os.makedirs(settings.storage_disk_path, exist_ok=True)
 app = FastAPI(title="DU Backend API", version="1.1.0")
 
 logger = logging.getLogger("uvicorn.error")
+
+SHEET_SYNC_INTERVAL_SECONDS = 300
+_scheduler: AsyncIOScheduler | None = None
+_SHEET_SYNC_JOB_ID = "dn_sheet_sync"
 
 @app.exception_handler(Exception)
 async def all_exception_handler(request, exc):
@@ -908,6 +915,69 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         ensure_dn(db, number, **sheet_fields)
 
     return sorted(dn_numbers)
+
+
+def _sync_dn_sheet_with_new_session() -> List[str]:
+    db = SessionLocal()
+    try:
+        return sync_dn_sheet_to_db(db, logger_obj=logger)
+    finally:
+        db.close()
+
+
+async def run_dn_sheet_sync_once() -> List[str]:
+    return await asyncio.to_thread(_sync_dn_sheet_with_new_session)
+
+
+async def _scheduled_dn_sheet_sync() -> None:
+    try:
+        synced_numbers = await run_dn_sheet_sync_once()
+        if synced_numbers:
+            logger.info("Synced %d DN numbers from Google Sheet", len(synced_numbers))
+    except Exception:
+        logger.exception("Scheduled DN sheet sync failed")
+
+
+@app.post("/api/dn/sync")
+async def trigger_dn_sync():
+    try:
+        synced_numbers = await run_dn_sheet_sync_once()
+    except Exception:
+        logger.exception("Manual DN sheet sync failed")
+        raise HTTPException(status_code=500, detail="dn_sync_failed") from None
+
+    return {
+        "ok": True,
+        "synced_count": len(synced_numbers),
+        "dn_numbers": synced_numbers,
+    }
+
+
+@app.on_event("startup")
+async def _start_scheduler() -> None:
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        return
+
+    _scheduler = AsyncIOScheduler()
+    _scheduler.add_job(
+        _scheduled_dn_sheet_sync,
+        trigger=IntervalTrigger(seconds=SHEET_SYNC_INTERVAL_SECONDS),
+        id=_SHEET_SYNC_JOB_ID,
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=5),
+    )
+    _scheduler.start()
+
+
+@app.on_event("shutdown")
+async def _shutdown_scheduler() -> None:
+    global _scheduler
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
+        _scheduler = None
+
 
 @app.get("/api/dn/stats/{date}")
 async def get_dn_stats(date: str):
