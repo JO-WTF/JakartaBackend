@@ -1,7 +1,7 @@
 # crud.py
 from __future__ import annotations
 
-from typing import Optional, Iterable, Tuple, List, Set
+from typing import Optional, Iterable, Tuple, List, Set, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from .models import DU, DURecord, DN, DNRecord
@@ -203,6 +203,19 @@ def add_dn_record(
     db.add(rec)
     db.commit()
     db.refresh(rec)
+
+    # Keep the DN table in sync with the latest record that was just created.
+    ensure_dn(
+        db,
+        dn_number,
+        du_id=du_id,
+        status=status,
+        remark=remark,
+        photo_url=photo_url,
+        lng=lng,
+        lat=lat,
+    )
+    db.refresh(rec)
     return rec
 
 
@@ -334,3 +347,24 @@ def get_existing_dn_numbers(db: Session, dn_numbers: Iterable[str]) -> Set[str]:
 
     rows = db.query(DN.dn_number).filter(DN.dn_number.in_(unique_numbers)).all()
     return {row[0] for row in rows}
+
+
+def get_latest_dn_records_map(db: Session, dn_numbers: Iterable[str]) -> Dict[str, DNRecord]:
+    unique_numbers = [number for number in {number for number in dn_numbers if number}]
+    if not unique_numbers:
+        return {}
+
+    q = (
+        db.query(DNRecord)
+        .filter(DNRecord.dn_number.in_(unique_numbers))
+        .order_by(DNRecord.dn_number.asc(), DNRecord.created_at.desc(), DNRecord.id.desc())
+    )
+
+    latest: Dict[str, DNRecord] = {}
+    for rec in q:
+        key = rec.dn_number
+        if key not in latest:
+            latest[key] = rec
+            if len(latest) == len(unique_numbers):
+                break
+    return latest
