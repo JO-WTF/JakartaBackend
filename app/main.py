@@ -10,9 +10,22 @@ import re, os, unicodedata
 from .settings import settings
 from .db import Base, engine, get_db
 from .crud import (
-    ensure_du, add_record, list_records, search_records,
-    list_records_by_du_ids, update_record, delete_record,
+    ensure_du,
+    add_record,
+    list_records,
+    search_records,
+    list_records_by_du_ids,
+    update_record,
+    delete_record,
     get_existing_du_ids,
+    ensure_dn,
+    add_dn_record,
+    list_dn_records,
+    search_dn_records,
+    list_dn_records_by_dn_numbers,
+    update_dn_record,
+    delete_dn_record,
+    get_existing_dn_numbers,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse
@@ -49,6 +62,7 @@ Base.metadata.create_all(bind=engine)
 
 # ====== 校验与清洗 ======
 DU_RE = re.compile(r"^.+$")
+DN_RE = re.compile(r"^.+$")
 
 VALID_STATUSES: tuple[str, ...] = (
     "PREPARE VEHICLE",
@@ -94,8 +108,12 @@ def normalize_du(s: str) -> str:
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
     )
     s = s.translate(trans_fullwidth_letters)
-    
+
     return s
+
+
+def normalize_dn(s: str) -> str:
+    return normalize_du(s)
 
 # ====== 基础健康检查 ======
 @app.get("/")
@@ -413,6 +431,302 @@ def get_du_records(du_id: str, db: Session = Depends(get_db)):
     ]}
 
 
+# ====== DN 接口 ======
+@app.post("/api/dn/update")
+def update_dn(
+    dnNumber: str = Form(...),
+    status: str = Form(...),
+    remark: str | None = Form(None),
+    duId: str | None = Form(None),
+    photo: UploadFile | None = File(None),
+    lng: str | float | None = Form(None),
+    lat: str | float | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    dn_number = normalize_dn(dnNumber)
+    if not DN_RE.fullmatch(dn_number):
+        raise HTTPException(status_code=400, detail="Invalid DN number")
+    if status not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    du_id_normalized = None
+    if duId:
+        du_id_normalized = normalize_du(duId)
+        if not DU_RE.fullmatch(du_id_normalized):
+            raise HTTPException(status_code=400, detail="Invalid DU ID")
+
+    ensure_dn(db, dn_number)
+    if du_id_normalized:
+        ensure_du(db, du_id_normalized)
+
+    photo_url = None
+    if photo and photo.filename:
+        content = photo.file.read()
+        photo_url = save_file(content, photo.content_type or "application/octet-stream")
+
+    lng_val = str(lng) if lng else None
+    lat_val = str(lat) if lat else None
+
+    rec = add_dn_record(
+        db,
+        dn_number=dn_number,
+        status=status,
+        remark=remark,
+        photo_url=photo_url,
+        lng=lng_val,
+        lat=lat_val,
+        du_id=du_id_normalized,
+    )
+    return {"ok": True, "id": rec.id, "photo": photo_url}
+
+
+@app.post("/api/dn/batch_update")
+def batch_update_dn(
+    dn_numbers: List[str] = Body(..., description="JSON array of DN numbers to create"),
+    db: Session = Depends(get_db),
+):
+    if not dn_numbers:
+        return {
+            "status": "fail",
+            "errmessage": "DN number 列表为空",
+            "success_count": 0,
+            "failure_count": 0,
+            "success_dn_numbers": [],
+            "failure_details": {},
+        }
+
+    normalized_numbers: List[str] = []
+    failure_details: dict[str, str] = {}
+    seen_numbers: set[str] = set()
+
+    def add_failure(number: str, reason: str) -> None:
+        failure_details[number] = reason
+
+    for raw_number in dn_numbers:
+        normalized = normalize_dn(raw_number)
+        if not normalized or not DN_RE.fullmatch(normalized):
+            base_key = raw_number if isinstance(raw_number, str) and raw_number else "<empty>"
+            failure_key = str(base_key) if base_key is not None else "<empty>"
+            add_failure(failure_key, "无效的 DN number")
+            continue
+        if normalized in seen_numbers:
+            add_failure(normalized, "请求中重复")
+            continue
+        seen_numbers.add(normalized)
+        normalized_numbers.append(normalized)
+
+    existing_numbers = get_existing_dn_numbers(db, normalized_numbers)
+    success_numbers: List[str] = []
+
+    for number in normalized_numbers:
+        if number in existing_numbers:
+            add_failure(number, "DN number 已存在")
+            continue
+
+        ensure_dn(db, number)
+        add_dn_record(
+            db,
+            dn_number=number,
+            status="NO STATUS",
+            remark=None,
+            photo_url=None,
+            lng=None,
+            lat=None,
+        )
+        success_numbers.append(number)
+
+    status_value = "ok" if success_numbers else "fail"
+
+    return {
+        "status": status_value,
+        "success_count": len(success_numbers),
+        "failure_count": len(failure_details),
+        "success_dn_numbers": success_numbers,
+        "failure_details": failure_details,
+    }
+
+
+@app.get("/api/dn/search")
+def search_dn_records_api(
+    dn_number: Optional[str] = Query(None, description="精确 DN number"),
+    du_id: Optional[str] = Query(None, description="关联 DU ID"),
+    status: Optional[str] = Query(None, description=f"状态过滤，可选: {VALID_STATUS_DESCRIPTION}"),
+    remark: Optional[str] = Query(None, description="备注关键词(模糊)"),
+    has_photo: Optional[bool] = Query(None, description="是否必须带附件 true/false"),
+    date_from: Optional[datetime] = Query(None, description="起始时间(ISO 8601)"),
+    date_to: Optional[datetime] = Query(None, description="结束时间(ISO 8601)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    if dn_number:
+        dn_number = normalize_dn(dn_number)
+        if not DN_RE.fullmatch(dn_number):
+            raise HTTPException(status_code=400, detail=f"Invalid DN number: {dn_number}")
+    if du_id:
+        du_id = normalize_du(du_id)
+        if not DU_RE.fullmatch(du_id):
+            raise HTTPException(status_code=400, detail=f"Invalid DU ID: {du_id}")
+
+    total, items = search_dn_records(
+        db,
+        dn_number=dn_number,
+        du_id=du_id,
+        status=status,
+        remark_keyword=remark,
+        has_photo=has_photo,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        page_size=page_size,
+    )
+
+    return {
+        "ok": True,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [
+            {
+                "id": it.id,
+                "dn_number": it.dn_number,
+                "du_id": it.du_id,
+                "status": it.status,
+                "remark": it.remark,
+                "photo_url": it.photo_url,
+                "lng": it.lng,
+                "lat": it.lat,
+                "created_at": it.created_at.isoformat() if it.created_at else None,
+            }
+            for it in items
+        ],
+    }
+
+
+@app.get("/api/dn/batch")
+def batch_get_dn_records(
+    dn_number: Optional[List[str]] = Query(None, description="重复 dn_number 或逗号分隔"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    raw_numbers = dn_number or []
+    flat: list[str] = []
+    for value in raw_numbers:
+        for part in value.split(","):
+            normalized = normalize_dn(part)
+            if normalized:
+                flat.append(normalized)
+
+    flat = [x for x in dict.fromkeys(flat) if x]
+
+    if not flat:
+        raise HTTPException(status_code=400, detail="Missing dn_number")
+
+    invalid = [x for x in flat if not DN_RE.fullmatch(x)]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid DN number(s): {', '.join(invalid)}")
+
+    total, items = list_dn_records_by_dn_numbers(db, flat, page=page, page_size=page_size)
+    return {
+        "ok": True,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [
+            {
+                "id": it.id,
+                "dn_number": it.dn_number,
+                "du_id": it.du_id,
+                "status": it.status,
+                "remark": it.remark,
+                "photo_url": it.photo_url,
+                "lng": it.lng,
+                "lat": it.lat,
+                "created_at": it.created_at.isoformat() if it.created_at else None,
+            }
+            for it in items
+        ],
+    }
+
+
+@app.put("/api/dn/update/{id}")
+def edit_dn_record(
+    id: int,
+    status: Optional[str] = Form(None),
+    remark: Optional[str] = Form(None),
+    duId: Optional[str] = Form(None),
+    photo: UploadFile | None = File(None),
+    json_body: Optional[dict] = Body(None),
+    db: Session = Depends(get_db),
+):
+    du_id_provided = duId is not None
+
+    if json_body and isinstance(json_body, dict):
+        if "status" in json_body:
+            status = json_body.get("status")
+        if "remark" in json_body:
+            remark = json_body.get("remark")
+        if "duId" in json_body:
+            duId = json_body.get("duId")
+            du_id_provided = True
+
+    if status is not None and status.strip() == "":
+        status = None
+    if remark is not None:
+        remark = remark.strip()
+        if remark == "":
+            remark = None
+        elif len(remark) > 1000:
+            raise HTTPException(status_code=400, detail="remark too long (max 1000 chars)")
+
+    if duId is not None:
+        duId = duId.strip()
+        if duId == "":
+            duId = None
+        else:
+            normalized_candidate = normalize_du(duId)
+            if not DU_RE.fullmatch(normalized_candidate):
+                raise HTTPException(status_code=400, detail="Invalid DU ID")
+            duId = normalized_candidate
+    elif du_id_provided:
+        duId = None
+
+    if status is not None and status not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    photo_url = None
+    if photo and getattr(photo, "filename", None):
+        content = photo.file.read()
+        photo_url = save_file(content, photo.content_type or "application/octet-stream")
+
+    normalized_du_id = duId if duId else None
+    if normalized_du_id:
+        ensure_du(db, normalized_du_id)
+
+    rec = update_dn_record(
+        db,
+        rec_id=id,
+        status=status,
+        remark=remark,
+        photo_url=photo_url,
+        du_id=normalized_du_id,
+        du_id_set=du_id_provided,
+    )
+    if not rec:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    return {"ok": True, "id": rec.id}
+
+
+@app.delete("/api/dn/update/{id}")
+def remove_dn_record(id: int, db: Session = Depends(get_db)):
+    ok = delete_dn_record(db, id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return {"ok": True}
+
+
 # 设置全局变量
 API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
@@ -586,6 +900,32 @@ async def get_dn_list():
         records.append(cleaned)
 
     return {"ok": True, "data": records}
+
+
+@app.get("/api/dn/{dn_number}")
+def get_dn_records(dn_number: str, db: Session = Depends(get_db)):
+    dn_number = normalize_dn(dn_number)
+    if not DN_RE.fullmatch(dn_number):
+        raise HTTPException(status_code=400, detail="Invalid DN number")
+
+    items = list_dn_records(db, dn_number)
+    return {
+        "ok": True,
+        "items": [
+            {
+                "id": it.id,
+                "dn_number": it.dn_number,
+                "du_id": it.du_id,
+                "status": it.status,
+                "remark": it.remark,
+                "photo_url": it.photo_url,
+                "lng": it.lng,
+                "lat": it.lat,
+                "created_at": it.created_at.isoformat() if it.created_at else None,
+            }
+            for it in items
+        ],
+    }
 
 
 # 可选：支持 python -m app.main 本地跑，避免相对导入报错
