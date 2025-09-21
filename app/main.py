@@ -29,6 +29,8 @@ from .crud import (
     get_existing_dn_numbers,
     get_latest_dn_records_map,
     search_dn_list,
+    create_dn_sync_log,
+    get_latest_dn_sync_log,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse
@@ -920,7 +922,31 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
 def _sync_dn_sheet_with_new_session() -> List[str]:
     db = SessionLocal()
     try:
-        return sync_dn_sheet_to_db(db, logger_obj=logger)
+        try:
+            synced_numbers = sync_dn_sheet_to_db(db, logger_obj=logger)
+        except Exception as exc:
+            create_dn_sync_log(
+                db,
+                status="failed",
+                synced_numbers=None,
+                message="Failed to sync DN data from Google Sheet",
+                error_message=str(exc),
+                error_traceback=traceback.format_exc(),
+            )
+            raise
+        else:
+            message = (
+                "Synced %d DN numbers from Google Sheet" % len(synced_numbers)
+                if synced_numbers
+                else "Google Sheet returned no DN rows to sync"
+            )
+            create_dn_sync_log(
+                db,
+                status="success",
+                synced_numbers=synced_numbers,
+                message=message,
+            )
+            return synced_numbers
     finally:
         db.close()
 
@@ -950,6 +976,27 @@ async def trigger_dn_sync():
         "ok": True,
         "synced_count": len(synced_numbers),
         "dn_numbers": synced_numbers,
+    }
+
+
+@app.get("/api/dn/sync/log/latest")
+def get_latest_dn_sync_log_entry(db: Session = Depends(get_db)):
+    log_entry = get_latest_dn_sync_log(db)
+    if not log_entry:
+        return {"ok": True, "data": None}
+
+    return {
+        "ok": True,
+        "data": {
+            "id": log_entry.id,
+            "status": log_entry.status,
+            "synced_count": log_entry.synced_count,
+            "dn_numbers": log_entry.dn_numbers,
+            "message": log_entry.message,
+            "error_message": log_entry.error_message,
+            "error_traceback": log_entry.error_traceback,
+            "created_at": log_entry.created_at.isoformat() if log_entry.created_at else None,
+        },
     }
 
 

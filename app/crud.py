@@ -1,10 +1,11 @@
 # crud.py
 from __future__ import annotations
 
+import json
 from typing import Optional, Iterable, Tuple, List, Set, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-from .models import DU, DURecord, DN, DNRecord
+from .models import DU, DURecord, DN, DNRecord, DNSyncLog
 
 
 def ensure_du(db: Session, du_id: str) -> DU:
@@ -217,6 +218,38 @@ def add_dn_record(
     )
     db.refresh(rec)
     return rec
+
+
+def create_dn_sync_log(
+    db: Session,
+    *,
+    status: str,
+    synced_numbers: Iterable[str] | None = None,
+    message: Optional[str] = None,
+    error_message: Optional[str] = None,
+    error_traceback: Optional[str] = None,
+) -> DNSyncLog:
+    numbers_list = sorted({str(num) for num in (synced_numbers or []) if str(num)})
+    log = DNSyncLog(
+        status=status,
+        synced_count=len(numbers_list),
+        dn_numbers_json=json.dumps(numbers_list) if numbers_list else None,
+        message=message,
+        error_message=error_message,
+        error_traceback=error_traceback,
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+def get_latest_dn_sync_log(db: Session) -> Optional[DNSyncLog]:
+    return (
+        db.query(DNSyncLog)
+        .order_by(DNSyncLog.created_at.desc(), DNSyncLog.id.desc())
+        .first()
+    )
 
 
 def list_dn_records(db: Session, dn_number: str, limit: int = 50) -> List[DNRecord]:
