@@ -6,6 +6,7 @@ from typing import Optional, Iterable, Tuple, List, Set, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from .models import DU, DURecord, DN, DNRecord, DNSyncLog
+from .dn_columns import filter_assignable_dn_fields
 
 
 def ensure_du(db: Session, du_id: str) -> DU:
@@ -158,18 +159,19 @@ def get_existing_du_ids(db: Session, du_ids: Iterable[str]) -> Set[str]:
 
 
 def ensure_dn(db: Session, dn_number: str, **fields: str | None) -> DN:
+    assignable = filter_assignable_dn_fields(fields)
+    non_null_assignable = {k: v for k, v in assignable.items() if v is not None}
+
     dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
     if not dn:
-        dn = DN(dn_number=dn_number, **{k: v for k, v in fields.items() if v is not None})
+        dn = DN(dn_number=dn_number, **non_null_assignable)
         db.add(dn)
         db.commit()
         db.refresh(dn)
         return dn
 
     updated = False
-    for key, value in fields.items():
-        if value is None:
-            continue
+    for key, value in non_null_assignable.items():
         if getattr(dn, key, None) != value:
             setattr(dn, key, value)
             updated = True
