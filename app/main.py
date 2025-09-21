@@ -978,9 +978,25 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
                 }
             )
             dn_sync_logger.debug("Updating existing DN %s with preserved fields", number)
+            persistence_action = "update"
         else:
             dn_sync_logger.debug("Creating new DN %s from sheet data", number)
-        ensure_dn(db, number, **sheet_fields)
+            persistence_action = "create"
+
+        try:
+            ensure_dn(db, number, **sheet_fields)
+        except Exception as exc:  # pragma: no cover - safety logging for production diagnostics
+            dn_sync_logger.exception(
+                "Failed to persist DN %s during %s: %s",
+                number,
+                persistence_action,
+                exc,
+            )
+            raise
+        else:
+            dn_sync_logger.debug(
+                "Persisted DN %s %s to database", number, persistence_action
+            )
 
     dn_sync_logger.info(
         "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, unique_dns=%d, "
@@ -1002,6 +1018,9 @@ def _sync_dn_sheet_with_new_session() -> List[str]:
         try:
             synced_numbers = sync_dn_sheet_to_db(db, logger_obj=logger)
         except Exception as exc:
+            dn_sync_logger.exception(
+                "sync_dn_sheet_to_db raised an error during manual trigger: %s", exc
+            )
             create_dn_sync_log(
                 db,
                 status="failed",
