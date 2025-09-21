@@ -965,12 +965,19 @@ async def _scheduled_dn_sheet_sync() -> None:
 
 
 @app.post("/api/dn/sync")
-async def trigger_dn_sync():
+def trigger_dn_sync():
     try:
-        synced_numbers = await run_dn_sheet_sync_once()
+        synced_numbers = _sync_dn_sheet_with_new_session()
     except Exception:
         logger.exception("Manual DN sheet sync failed")
-        raise HTTPException(status_code=500, detail="dn_sync_failed") from None
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "error": "dn_sync_failed",
+                "errorInfo": traceback.format_exc(),
+            },
+        )
 
     return {
         "ok": True,
