@@ -1,3 +1,4 @@
+import json
 from sqlalchemy import Column, String, Integer, DateTime, Text
 from sqlalchemy.sql import func
 from .db import Base
@@ -73,3 +74,27 @@ class DNRecord(Base):
     lng = Column(String(20), nullable=True)
     lat = Column(String(20), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class DNSyncLog(Base):
+    __tablename__ = "dn_sync_log"
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(16), nullable=False)
+    synced_count = Column(Integer, nullable=False, default=0)
+    dn_numbers_json = Column(Text, nullable=True)
+    message = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    error_traceback = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    @property
+    def dn_numbers(self) -> list[str]:
+        if not self.dn_numbers_json:
+            return []
+        try:
+            data = json.loads(self.dn_numbers_json)
+        except Exception:
+            return []
+        if isinstance(data, list):
+            return data
+        return []
