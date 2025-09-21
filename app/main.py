@@ -9,8 +9,15 @@ import asyncio
 import re, os, unicodedata
 from pathlib import Path
 
+from pydantic import BaseModel, Field
 from .settings import settings
 from .db import Base, engine, get_db, SessionLocal
+from .dn_columns import (
+    extend_dn_columns as extend_dn_table_columns,
+    get_sheet_columns,
+    refresh_dynamic_columns,
+    SHEET_BASE_COLUMNS,
+)
 from .crud import (
     ensure_du,
     add_record,
@@ -90,6 +97,35 @@ if settings.storage_driver != "s3":
     app.mount("/uploads", StaticFiles(directory=settings.storage_disk_path, check_dir=False), name="uploads")
 
 Base.metadata.create_all(bind=engine)
+refresh_dynamic_columns(engine)
+
+
+def _ensure_configured_dn_columns() -> None:
+    columns = list(SHEET_BASE_COLUMNS)
+    if not columns:
+        return
+
+    added: List[str] = []
+    session = SessionLocal()
+    try:
+        added = extend_dn_table_columns(session, columns)
+    except Exception:
+        logger.exception(
+            "Failed to ensure configured DN columns are present in the database"
+        )
+        raise
+    finally:
+        session.close()
+
+    if added:
+        logger.info(
+            "Extended DN table with %d configured sheet column(s): %s",
+            len(added),
+            ", ".join(added),
+        )
+
+
+_ensure_configured_dn_columns()
 
 # ====== 校验与清洗 ======
 DU_RE = re.compile(r"^.+$")
@@ -114,6 +150,14 @@ VALID_STATUSES: tuple[str, ...] = (
 )
 
 VALID_STATUS_DESCRIPTION = ", ".join(VALID_STATUSES)
+
+
+class DNColumnExtensionRequest(BaseModel):
+    columns: List[str] = Field(
+        ...,
+        description="DN table columns to ensure exist",
+        min_length=1,
+    )
 
 def normalize_du(s: str) -> str:
     """NFC 规整、去零宽、全角转半角、去空白、统一大写"""
@@ -463,6 +507,24 @@ def get_du_records(du_id: str, db: Session = Depends(get_db)):
 
 
 # ====== DN 接口 ======
+
+
+@app.post("/api/dn/columns/extend")
+def extend_dn_columns_api(
+    request: DNColumnExtensionRequest, db: Session = Depends(get_db)
+):
+    try:
+        added = extend_dn_table_columns(db, request.columns)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "ok": True,
+        "added_columns": added,
+        "columns": get_sheet_columns(),
+    }
+
+
 @app.post("/api/dn/update")
 def update_dn(
     dnNumber: str = Form(...),
@@ -782,41 +844,6 @@ def remove_dn_record(id: int, db: Session = Depends(get_db)):
 API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
 
-SHEET_COLUMNS: List[str] = [
-    "dn_number",
-    "du_id",
-    "status_wh",
-    "lsp",
-    "area",
-    "mos_given_time",
-    "expected_arrival_time_from_project",
-    "project_request",
-    "distance_poll_mover_to_site",
-    "driver_contact_name",
-    "driver_contact_number",
-    "delivery_type_a_to_b",
-    "transportation_time",
-    "estimate_depart_from_start_point_etd",
-    "estimate_arrive_sites_time_eta",
-    "lsp_tracker",
-    "hw_tracker",
-    "actual_depart_from_start_point_atd",
-    "actual_arrive_time_ata",
-    "subcon",
-    "subcon_receiver_contact_number",
-    "status_delivery",
-    "issue_remark",
-    "mos_attempt_1st_time",
-    "mos_attempt_2nd_time",
-    "mos_attempt_3rd_time",
-    "mos_attempt_4th_time",
-    "mos_attempt_5th_time",
-    "mos_attempt_6th_time",
-    "mos_type",
-    "region",
-    "plan_mos_date",
-]
-
 MONTH_MAP = {
     "Sept": "Sep",  # 'Sept' -> 'Sep'
 }
@@ -854,7 +881,7 @@ def parse_date(date_str: str):
 
     return date_str
 
-def process_sheet_data(sheet) -> pd.DataFrame:
+def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     """处理工作表数据"""
     all_values = sheet.get_all_values()
     dn_sync_logger.debug(
@@ -862,14 +889,14 @@ def process_sheet_data(sheet) -> pd.DataFrame:
     )
     data = all_values[3:]  # 从第4行开始
     trimmed: List[List[str]] = []
-    column_count = len(SHEET_COLUMNS)
+    column_count = len(columns)
     for row in data:
         row_values = row[:column_count]
         if len(row_values) < column_count:
             row_values = row_values + [""] * (column_count - len(row_values))
         trimmed.append(row_values)
 
-    df = pd.DataFrame(trimmed, columns=SHEET_COLUMNS)
+    df = pd.DataFrame(trimmed, columns=columns)
     dn_sync_logger.debug(
         "Sheet '%s' produced DataFrame with %d rows", sheet.title, len(df)
     )
@@ -878,10 +905,11 @@ def process_sheet_data(sheet) -> pd.DataFrame:
 def process_all_sheets(sh) -> pd.DataFrame:
     """处理所有符合条件的工作表并合并数据"""
     plan_sheets = fetch_plan_sheets(sh)
-    all_data = [process_sheet_data(sheet) for sheet in plan_sheets]
+    columns = get_sheet_columns()
+    all_data = [process_sheet_data(sheet, columns) for sheet in plan_sheets]
     if not all_data:
         dn_sync_logger.debug("No plan sheets found to process")
-        return pd.DataFrame(columns=SHEET_COLUMNS)
+        return pd.DataFrame(columns=columns)
     combined = pd.concat(all_data, ignore_index=True)
     dn_sync_logger.debug(
         "Combined DataFrame has %d rows and %d columns",
@@ -922,6 +950,7 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         dn_sync_logger.exception("Failed to fetch DN sheet data")
         raise
 
+    sheet_columns: List[str] = list(combined_df.columns)
     records: List[dict[str, Any]] = []
     dn_numbers: set[str] = set()
 
@@ -963,7 +992,9 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
 
     for entry in records:
         number = entry["dn_number"]
-        sheet_fields = {key: entry.get(key) for key in SHEET_COLUMNS if key != "dn_number"}
+        sheet_fields = {
+            key: entry.get(key) for key in sheet_columns if key != "dn_number"
+        }
         latest = latest_records_for_update.get(number)
         if latest:
             if not sheet_fields.get("du_id") and latest.du_id:
@@ -1209,6 +1240,7 @@ async def get_dn_list(db: Session = Depends(get_db)):
         return {"ok": True, "data": []}
 
     latest_records = get_latest_dn_records_map(db, [it.dn_number for it in items])
+    sheet_columns = get_sheet_columns()
 
     data: List[dict[str, Any]] = []
     for it in items:
@@ -1222,7 +1254,7 @@ async def get_dn_list(db: Session = Depends(get_db)):
             "lng": it.lng,
             "lat": it.lat,
         }
-        for column in SHEET_COLUMNS:
+        for column in sheet_columns:
             if column == "dn_number":
                 continue
             row[column] = getattr(it, column)
@@ -1274,6 +1306,7 @@ def search_dn_list_api(
         }
 
     latest_records = get_latest_dn_records_map(db, [it.dn_number for it in items])
+    sheet_columns = get_sheet_columns()
 
     data: list[dict[str, Any]] = []
     for it in items:
@@ -1287,7 +1320,7 @@ def search_dn_list_api(
             "lng": it.lng,
             "lat": it.lat,
         }
-        for column in SHEET_COLUMNS:
+        for column in sheet_columns:
             if column == "dn_number":
                 continue
             row[column] = getattr(it, column)
