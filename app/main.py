@@ -7,6 +7,7 @@ from typing import Optional, List, Any
 from datetime import datetime, timedelta
 import asyncio
 import re, os, unicodedata
+from pathlib import Path
 
 from .settings import settings
 from .db import Base, engine, get_db, SessionLocal
@@ -33,7 +34,7 @@ from .crud import (
     get_latest_dn_sync_log,
 )
 from .storage import save_file
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import logging, traceback
@@ -46,6 +47,24 @@ os.makedirs(settings.storage_disk_path, exist_ok=True)
 app = FastAPI(title="DU Backend API", version="1.1.0")
 
 logger = logging.getLogger("uvicorn.error")
+
+DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
+DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+dn_sync_logger = logging.getLogger("dn_sync")
+if not any(
+    isinstance(handler, logging.FileHandler)
+    and getattr(handler, "baseFilename", None) == str(DN_SYNC_LOG_PATH)
+    for handler in dn_sync_logger.handlers
+):
+    file_handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    )
+    file_handler.setLevel(logging.DEBUG)
+    dn_sync_logger.addHandler(file_handler)
+dn_sync_logger.setLevel(logging.DEBUG)
+dn_sync_logger.propagate = False
 
 SHEET_SYNC_INTERVAL_SECONDS = 300
 _scheduler: AsyncIOScheduler | None = None
@@ -809,7 +828,14 @@ DATE_FORMATS = [
 def fetch_plan_sheets(sheet_url):
     """获取以 'Plan MOS' 开头的所有工作表"""
     sheets = sheet_url.worksheets()
-    return [sheet for sheet in sheets if sheet.title.startswith("Plan MOS")]
+    dn_sync_logger.debug("Spreadsheet has %d worksheets", len(sheets))
+    plan_sheets = [sheet for sheet in sheets if sheet.title.startswith("Plan MOS")]
+    dn_sync_logger.debug(
+        "Filtered %d plan sheets: %s",
+        len(plan_sheets),
+        [sheet.title for sheet in plan_sheets],
+    )
+    return plan_sheets
 
 def parse_date(date_str: str):
     """解析日期字符串"""
@@ -830,7 +856,11 @@ def parse_date(date_str: str):
 
 def process_sheet_data(sheet) -> pd.DataFrame:
     """处理工作表数据"""
-    data = sheet.get_all_values()[3:]  # 从第4行开始
+    all_values = sheet.get_all_values()
+    dn_sync_logger.debug(
+        "Processing sheet '%s' with %d total rows", sheet.title, len(all_values)
+    )
+    data = all_values[3:]  # 从第4行开始
     trimmed: List[List[str]] = []
     column_count = len(SHEET_COLUMNS)
     for row in data:
@@ -840,6 +870,9 @@ def process_sheet_data(sheet) -> pd.DataFrame:
         trimmed.append(row_values)
 
     df = pd.DataFrame(trimmed, columns=SHEET_COLUMNS)
+    dn_sync_logger.debug(
+        "Sheet '%s' produced DataFrame with %d rows", sheet.title, len(df)
+    )
     return df
 
 def process_all_sheets(sh) -> pd.DataFrame:
@@ -847,8 +880,15 @@ def process_all_sheets(sh) -> pd.DataFrame:
     plan_sheets = fetch_plan_sheets(sh)
     all_data = [process_sheet_data(sheet) for sheet in plan_sheets]
     if not all_data:
+        dn_sync_logger.debug("No plan sheets found to process")
         return pd.DataFrame(columns=SHEET_COLUMNS)
-    return pd.concat(all_data, ignore_index=True)
+    combined = pd.concat(all_data, ignore_index=True)
+    dn_sync_logger.debug(
+        "Combined DataFrame has %d rows and %d columns",
+        len(combined),
+        len(combined.columns),
+    )
+    return combined
 
 
 def normalize_sheet_value(value: Any) -> Any:
@@ -866,18 +906,29 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
     返回成功同步的 DN number 列表（按字典序升序）。
     """
     log = logger_obj or logger
+    start_time = datetime.utcnow()
+    dn_sync_logger.info("Starting sync_dn_sheet_to_db run")
 
     try:
+        dn_sync_logger.debug("Creating gspread client with API key")
         gc = gspread.api_key(API_KEY)
+        dn_sync_logger.debug("Opening spreadsheet URL: %s", SPREADSHEET_URL)
         sh = gc.open_by_url(SPREADSHEET_URL)
+        dn_sync_logger.debug("Spreadsheet opened successfully")
         combined_df = process_all_sheets(sh)
     except Exception as exc:
         if log:
             log.exception("Failed to fetch DN sheet data: %s", exc)
+        dn_sync_logger.exception("Failed to fetch DN sheet data")
         raise
 
     records: List[dict[str, Any]] = []
     dn_numbers: set[str] = set()
+
+    total_rows = len(combined_df) if not combined_df.empty else 0
+    skipped_missing_number = 0
+    skipped_empty_payload = 0
+    dn_sync_logger.debug("DataFrame contains %d total rows", total_rows)
 
     if not combined_df.empty:
         for record in combined_df.to_dict(orient="records"):
@@ -886,17 +937,29 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
             raw_number_str = str(raw_number).strip() if raw_number is not None else ""
             normalized_number = normalize_dn(raw_number_str) if raw_number_str else ""
             if not normalized_number:
+                skipped_missing_number += 1
                 continue
             cleaned["dn_number"] = normalized_number
             if all(value is None for key, value in cleaned.items() if key != "dn_number"):
+                skipped_empty_payload += 1
                 continue
             records.append(cleaned)
             dn_numbers.add(normalized_number)
+    else:
+        dn_sync_logger.info("Combined DataFrame is empty; no rows to process")
 
     if not dn_numbers:
+        dn_sync_logger.info(
+            "No DN numbers extracted (skipped_missing=%d, skipped_empty=%d)",
+            skipped_missing_number,
+            skipped_empty_payload,
+        )
         return []
 
     latest_records_for_update = get_latest_dn_records_map(db, dn_numbers)
+    dn_sync_logger.debug(
+        "Fetched %d existing DN records for potential update", len(latest_records_for_update)
+    )
 
     for entry in records:
         number = entry["dn_number"]
@@ -914,7 +977,37 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
                     "lat": latest.lat,
                 }
             )
-        ensure_dn(db, number, **sheet_fields)
+            dn_sync_logger.debug("Updating existing DN %s with preserved fields", number)
+            persistence_action = "update"
+        else:
+            dn_sync_logger.debug("Creating new DN %s from sheet data", number)
+            persistence_action = "create"
+
+        try:
+            ensure_dn(db, number, **sheet_fields)
+        except Exception as exc:  # pragma: no cover - safety logging for production diagnostics
+            dn_sync_logger.exception(
+                "Failed to persist DN %s during %s: %s",
+                number,
+                persistence_action,
+                exc,
+            )
+            raise
+        else:
+            dn_sync_logger.debug(
+                "Persisted DN %s %s to database", number, persistence_action
+            )
+
+    dn_sync_logger.info(
+        "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, unique_dns=%d, "
+        "skipped_missing=%d, skipped_empty=%d, duration=%.3fs",
+        total_rows,
+        len(records),
+        len(dn_numbers),
+        skipped_missing_number,
+        skipped_empty_payload,
+        (datetime.utcnow() - start_time).total_seconds(),
+    )
 
     return sorted(dn_numbers)
 
@@ -925,6 +1018,9 @@ def _sync_dn_sheet_with_new_session() -> List[str]:
         try:
             synced_numbers = sync_dn_sheet_to_db(db, logger_obj=logger)
         except Exception as exc:
+            dn_sync_logger.exception(
+                "sync_dn_sheet_to_db raised an error during manual trigger: %s", exc
+            )
             create_dn_sync_log(
                 db,
                 status="failed",
@@ -1005,6 +1101,26 @@ def get_latest_dn_sync_log_entry(db: Session = Depends(get_db)):
             "created_at": log_entry.created_at.isoformat() if log_entry.created_at else None,
         },
     }
+
+
+@app.get("/api/dn/sync/log/file")
+def download_dn_sync_log():
+    for handler in dn_sync_logger.handlers:
+        flush = getattr(handler, "flush", None)
+        if callable(flush):
+            flush()
+
+    if not DN_SYNC_LOG_PATH.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": "log_file_not_found"},
+        )
+
+    return FileResponse(
+        path=DN_SYNC_LOG_PATH,
+        filename=DN_SYNC_LOG_PATH.name,
+        media_type="text/plain",
+    )
 
 
 @app.on_event("startup")
