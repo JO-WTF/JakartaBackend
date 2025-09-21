@@ -86,6 +86,64 @@ def _register_column_on_model(column_name: str) -> None:
     mapper.add_property(column_name, table.c[column_name])
 
 
+def ensure_base_dn_columns(bind: Engine | Session | None = None) -> List[str]:
+    """Ensure all base columns defined on :class:`DN` exist in the database."""
+
+    engine_obj = _get_engine(bind)
+    inspector = sa_inspect(engine_obj)
+    existing_columns = {info["name"] for info in inspector.get_columns("dn")}
+
+    statements: List[tuple[str, str]] = []
+    dialect = engine_obj.dialect
+
+    for column in DN.__table__.columns:
+        name = column.name
+        if name in existing_columns:
+            continue
+
+        if not column.nullable and column.server_default is None:
+            logger.warning(
+                "Skipping base DN column '%s' because it is non-nullable and lacks a default",
+                name,
+            )
+            continue
+
+        col_type = column.type.compile(dialect=dialect)
+
+        default_clause = ""
+        if column.server_default is not None:
+            default_arg = column.server_default.arg
+            try:
+                default_sql = str(default_arg.compile(dialect=dialect))
+            except AttributeError:
+                default_sql = str(default_arg)
+            if default_sql:
+                default_clause = f" DEFAULT {default_sql}"
+
+        nullable_clause = "" if column.nullable else " NOT NULL"
+        sql = f'ALTER TABLE "dn" ADD COLUMN "{name}" {col_type}{default_clause}{nullable_clause}'
+        logger.info("Adding missing base DN column '%s'", name)
+        statements.append((name, sql))
+
+    if not statements:
+        return []
+
+    added: List[str] = []
+
+    if isinstance(bind, Session):
+        for name, sql in statements:
+            bind.execute(text(sql))
+            added.append(name)
+        bind.commit()
+    else:
+        with engine_obj.begin() as conn:
+            for name, sql in statements:
+                conn.execute(text(sql))
+                added.append(name)
+
+    return added
+
+
 def refresh_dynamic_columns(bind: Engine | Session | None = None) -> List[str]:
     """Reload the list of dynamic columns from the database."""
 
@@ -182,5 +240,6 @@ __all__ = [
     "get_sheet_columns",
     "get_dynamic_columns",
     "get_mutable_dn_columns",
+    "ensure_base_dn_columns",
     "refresh_dynamic_columns",
 ]

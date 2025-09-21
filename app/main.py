@@ -16,6 +16,7 @@ from .dn_columns import (
     extend_dn_columns as extend_dn_table_columns,
     get_sheet_columns,
     refresh_dynamic_columns,
+    ensure_base_dn_columns,
 )
 from .crud import (
     ensure_du,
@@ -96,6 +97,7 @@ if settings.storage_driver != "s3":
     app.mount("/uploads", StaticFiles(directory=settings.storage_disk_path, check_dir=False), name="uploads")
 
 Base.metadata.create_all(bind=engine)
+ensure_base_dn_columns(engine)
 refresh_dynamic_columns(engine)
 
 # ====== 校验与清洗 ======
