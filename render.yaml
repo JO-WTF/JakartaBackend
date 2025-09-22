@@ -15,17 +15,13 @@ services:
         value: disk
       - key: STORAGE_DISK_PATH
         value: /data/uploads
+      - key: PORT
+        value: "10000"
     disk:
       name: uploads
       mountPath: /data
       sizeGB: 1
-    dockerCommand:
-      - uvicorn
-      - app.main:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "10000"
+    dockerCommand: ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
 
 databases:
   - name: du-postgres

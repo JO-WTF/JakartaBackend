@@ -55,6 +55,18 @@ app = FastAPI(title="DU Backend API", version="1.1.0")
 
 logger = logging.getLogger("uvicorn.error")
 
+
+def _get_server_port() -> int:
+    raw = os.getenv("PORT", "10000")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid PORT value '%s'; defaulting to 10000", raw)
+        return 10000
+
+
+SERVER_PORT = _get_server_port()
+
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1341,4 +1353,10 @@ def get_dn_records(dn_number: str, db: Session = Depends(get_db)):
 # 可选：支持 python -m app.main 本地跑，避免相对导入报错
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=10000, reload=True)
+
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=SERVER_PORT,
+        reload=True,
+    )
