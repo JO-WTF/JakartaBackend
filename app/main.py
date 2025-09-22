@@ -687,11 +687,19 @@ def search_dn_records_api(
 @app.get("/api/dn/batch")
 def batch_get_dn_records(
     dn_number: Optional[List[str]] = Query(None, description="重复 dn_number 或逗号分隔"),
+    dnnumber_legacy: Optional[List[str]] = Query(
+        None,
+        alias="dnnumber",
+        description="重复 dn_number 或逗号分隔 (legacy alias)",
+        include_in_schema=False,
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    raw_numbers = dn_number or []
+    raw_numbers = list(dn_number or [])
+    if dnnumber_legacy:
+        raw_numbers.extend(dnnumber_legacy)
     flat: list[str] = []
     for value in raw_numbers:
         for part in value.split(","):
@@ -1281,7 +1289,13 @@ async def get_dn_list(db: Session = Depends(get_db)):
 @app.get("/api/dn/list/search")
 def search_dn_list_api(
     date: str | None = Query(None, description="Plan MOS date"),
-    dnnumber: str | None = Query(None, description="DN number"),
+    dn_number: str | None = Query(None, description="DN number"),
+    dnnumber_legacy: str | None = Query(
+        None,
+        alias="dnnumber",
+        description="DN number (legacy alias)",
+        include_in_schema=False,
+    ),
     status: str | None = Query(None, description="Status delivery"),
     lsp: str | None = Query(None, description="LSP"),
     region: str | None = Query(None, description="Region"),
@@ -1291,7 +1305,8 @@ def search_dn_list_api(
     db: Session = Depends(get_db),
 ):
     plan_date = date.strip() if date else None
-    dn_number = normalize_dn(dnnumber) if dnnumber else None
+    dn_query_value = dn_number or dnnumber_legacy
+    dn_number = normalize_dn(dn_query_value) if dn_query_value else None
     if dn_number and not DN_RE.fullmatch(dn_number):
         raise HTTPException(status_code=400, detail="Invalid DN number")
 
