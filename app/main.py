@@ -1,5 +1,6 @@
 # app/main.py
 from fastapi import Body, FastAPI, UploadFile, File, Form, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +17,7 @@ from .dn_columns import (
     extend_dn_columns as extend_dn_table_columns,
     get_sheet_columns,
     refresh_dynamic_columns,
+    filter_assignable_dn_fields,
 )
 from .crud import (
     ensure_du,
@@ -47,6 +49,7 @@ import logging, traceback
 import gspread
 import pandas as pd
 from .models import DN
+from sqlalchemy.dialects.postgresql import insert
 
 # ====== 启动与静态 ======
 os.makedirs(settings.storage_disk_path, exist_ok=True)
@@ -961,6 +964,11 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         "Fetched %d existing DN records for potential update", len(latest_records_for_update)
     )
 
+    payload_by_number: dict[str, dict[str, Any]] = {}
+    bulk_update_columns: set[str] = set()
+    numbers_to_create: set[str] = set()
+    numbers_to_update: set[str] = set()
+
     for entry in records:
         number = entry["dn_number"]
         sheet_fields = {
@@ -979,26 +987,53 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
                     "lat": latest.lat,
                 }
             )
-            dn_sync_logger.debug("Updating existing DN %s with preserved fields", number)
-            persistence_action = "update"
+            if number not in numbers_to_update:
+                dn_sync_logger.debug(
+                    "Preparing update for existing DN %s with preserved fields", number
+                )
+            numbers_to_update.add(number)
         else:
-            dn_sync_logger.debug("Creating new DN %s from sheet data", number)
-            persistence_action = "create"
+            if number not in numbers_to_create:
+                dn_sync_logger.debug("Preparing creation for DN %s from sheet data", number)
+            numbers_to_create.add(number)
 
-        try:
-            ensure_dn(db, number, **sheet_fields)
-        except Exception as exc:  # pragma: no cover - safety logging for production diagnostics
-            dn_sync_logger.exception(
-                "Failed to persist DN %s during %s: %s",
-                number,
-                persistence_action,
-                exc,
+        assignable_fields = filter_assignable_dn_fields(sheet_fields)
+        non_null_fields = {
+            key: value for key, value in assignable_fields.items() if value is not None
+        }
+        if non_null_fields:
+            bulk_update_columns.update(non_null_fields.keys())
+        payload = payload_by_number.setdefault(number, {"dn_number": number})
+        payload.update(non_null_fields)
+
+    dn_sync_logger.debug(
+        "Prepared %d DN payloads for bulk upsert (create=%d, update=%d)",
+        len(payload_by_number),
+        len(numbers_to_create),
+        len(numbers_to_update),
+    )
+
+    if payload_by_number:
+        insert_stmt = insert(DN)
+        if bulk_update_columns:
+            update_mappings = {
+                column: func.coalesce(
+                    insert_stmt.excluded[column], getattr(DN.__table__.c, column)
+                )
+                for column in sorted(bulk_update_columns)
+            }
+            upsert_stmt = insert_stmt.on_conflict_do_update(
+                index_elements=[DN.dn_number],
+                set_=update_mappings,
             )
-            raise
         else:
-            dn_sync_logger.debug(
-                "Persisted DN %s %s to database", number, persistence_action
+            upsert_stmt = insert_stmt.on_conflict_do_nothing(
+                index_elements=[DN.dn_number]
             )
+
+        db.execute(upsert_stmt, list(payload_by_number.values()))
+        db.commit()
+        dn_sync_logger.debug("Bulk upsert committed for %d DN entries", len(payload_by_number))
 
     dn_sync_logger.info(
         "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, unique_dns=%d, "
