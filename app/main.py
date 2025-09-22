@@ -33,6 +33,7 @@ from .crud import (
     list_dn_records,
     search_dn_records,
     list_dn_records_by_dn_numbers,
+    list_dn_by_dn_numbers,
     update_dn_record,
     delete_dn_record,
     get_existing_dn_numbers,
@@ -168,6 +169,38 @@ def normalize_du(s: str) -> str:
 
 def normalize_dn(s: str) -> str:
     return normalize_du(s)
+
+
+def _normalize_batch_dn_numbers(*value_lists: Optional[List[str]]) -> list[str]:
+    raw_numbers: list[str] = []
+    for values in value_lists:
+        if not values:
+            continue
+        raw_numbers.extend(values)
+
+    flat: list[str] = []
+    for value in raw_numbers:
+        if not value:
+            continue
+        for part in value.split(','):
+            normalized = normalize_dn(part)
+            if normalized:
+                flat.append(normalized)
+
+    numbers = [x for x in dict.fromkeys(flat) if x]
+
+    if not numbers:
+        raise HTTPException(status_code=400, detail="Missing dn_number")
+
+    invalid = [x for x in numbers if not DN_RE.fullmatch(x)]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid DN number(s): {', '.join(invalid)}",
+        )
+
+    return numbers
+
 
 # ====== 基础健康检查 ======
 @app.get("/")
@@ -697,26 +730,11 @@ def batch_get_dn_records(
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    raw_numbers = list(dn_number or [])
-    if dnnumber_legacy:
-        raw_numbers.extend(dnnumber_legacy)
-    flat: list[str] = []
-    for value in raw_numbers:
-        for part in value.split(","):
-            normalized = normalize_dn(part)
-            if normalized:
-                flat.append(normalized)
+    dn_numbers = _normalize_batch_dn_numbers(dn_number, dnnumber_legacy)
 
-    flat = [x for x in dict.fromkeys(flat) if x]
-
-    if not flat:
-        raise HTTPException(status_code=400, detail="Missing dn_number")
-
-    invalid = [x for x in flat if not DN_RE.fullmatch(x)]
-    if invalid:
-        raise HTTPException(status_code=400, detail=f"Invalid DN number(s): {', '.join(invalid)}")
-
-    total, items = list_dn_records_by_dn_numbers(db, flat, page=page, page_size=page_size)
+    total, items = list_dn_records_by_dn_numbers(
+        db, dn_numbers, page=page, page_size=page_size
+    )
     return {
         "ok": True,
         "total": total,
@@ -1320,6 +1338,68 @@ def search_dn_list_api(
         project_request=project.strip() if project else None,
         page=page,
         page_size=page_size,
+    )
+
+    if not items:
+        return {
+            "ok": True,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": [],
+        }
+
+    latest_records = get_latest_dn_records_map(db, [it.dn_number for it in items])
+    sheet_columns = get_sheet_columns()
+
+    data: list[dict[str, Any]] = []
+    for it in items:
+        row: dict[str, Any] = {
+            "id": it.id,
+            "dn_number": it.dn_number,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "status": it.status,
+            "remark": it.remark,
+            "photo_url": it.photo_url,
+            "lng": it.lng,
+            "lat": it.lat,
+        }
+        for column in sheet_columns:
+            if column == "dn_number":
+                continue
+            row[column] = getattr(it, column)
+        latest = latest_records.get(it.dn_number)
+        row["latest_record_created_at"] = (
+            latest.created_at.isoformat() if latest and latest.created_at else None
+        )
+        data.append(row)
+
+    return {
+        "ok": True,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": data,
+    }
+
+
+@app.get("/api/dn/list/batch")
+def batch_search_dn_list(
+    dn_number: Optional[List[str]] = Query(None, description="重复 dn_number 或逗号分隔"),
+    dnnumber_legacy: Optional[List[str]] = Query(
+        None,
+        alias="dnnumber",
+        description="重复 dn_number 或逗号分隔 (legacy alias)",
+        include_in_schema=False,
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    dn_numbers = _normalize_batch_dn_numbers(dn_number, dnnumber_legacy)
+
+    total, items = list_dn_by_dn_numbers(
+        db, dn_numbers, page=page, page_size=page_size
     )
 
     if not items:

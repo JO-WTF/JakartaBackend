@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Optional, Iterable, Tuple, List, Set, Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, case
 from .models import DU, DURecord, DN, DNRecord, DNSyncLog
 from .dn_columns import filter_assignable_dn_fields
 
@@ -368,6 +368,36 @@ def list_dn_records_by_dn_numbers(
     total = base_q.count()
     items = (
         base_q.order_by(DNRecord.created_at.desc(), DNRecord.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return total, items
+
+
+def list_dn_by_dn_numbers(
+    db: Session,
+    dn_numbers: Iterable[str],
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> Tuple[int, List[DN]]:
+    numbers = [number for number in dict.fromkeys(dn_numbers) if number]
+    if not numbers:
+        return 0, []
+
+    base_q = db.query(DN).filter(DN.dn_number.in_(numbers))
+
+    total = base_q.count()
+
+    ordering = case(
+        value=DN.dn_number,
+        whens={number: index for index, number in enumerate(numbers)},
+        else_=len(numbers),
+    )
+
+    items = (
+        base_q.order_by(ordering)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
