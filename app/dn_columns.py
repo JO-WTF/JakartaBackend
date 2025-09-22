@@ -21,12 +21,9 @@ _IMMUTABLE_COLUMNS = {"id", "dn_number", "created_at"}
 
 # DN columns that should be stored as unbounded text to avoid truncation issues.
 _TEXT_COLUMNS = {
-    "mos_attempt_1st_time",
-    "mos_attempt_2nd_time",
-    "mos_attempt_3rd_time",
-    "mos_attempt_4th_time",
-    "mos_attempt_5th_time",
-    "mos_attempt_6th_time",
+    column.name
+    for column in DN.__table__.columns
+    if isinstance(column.type, SAText)
 }
 
 # Base sheet columns that mirror the Google Sheet structure.
