@@ -19,6 +19,16 @@ _BASE_DN_COLUMN_SET = set(_BASE_DN_COLUMNS)
 # Columns that should never be updated through sheet synchronization.
 _IMMUTABLE_COLUMNS = {"id", "dn_number", "created_at"}
 
+# DN columns that should be stored as unbounded text to avoid truncation issues.
+_TEXT_COLUMNS = {
+    "mos_attempt_1st_time",
+    "mos_attempt_2nd_time",
+    "mos_attempt_3rd_time",
+    "mos_attempt_4th_time",
+    "mos_attempt_5th_time",
+    "mos_attempt_6th_time",
+}
+
 # Base sheet columns that mirror the Google Sheet structure.
 SHEET_BASE_COLUMNS: List[str] = [
     "dn_number",
@@ -144,6 +154,57 @@ def ensure_base_dn_columns(bind: Engine | Session | None = None) -> List[str]:
     return added
 
 
+def ensure_text_dn_columns(bind: Engine | Session | None = None) -> List[str]:
+    """Upgrade DN columns that need unrestricted text storage."""
+
+    engine_obj = _get_engine(bind)
+    dialect_name = engine_obj.dialect.name
+
+    # SQLite ignores length limits and lacks ALTER TYPE support; nothing to do.
+    if dialect_name == "sqlite":
+        return []
+
+    if dialect_name != "postgresql":
+        return []
+
+    inspector = sa_inspect(engine_obj)
+    columns_info = {info["name"]: info for info in inspector.get_columns("dn")}
+
+    statements: List[tuple[str, str]] = []
+
+    for name in _TEXT_COLUMNS:
+        info = columns_info.get(name)
+        if not info:
+            continue
+        col_type = info.get("type")
+        if col_type is None:
+            continue
+        length = getattr(col_type, "length", None)
+        if length is None:
+            continue
+
+        logger.info("Widening DN column '%s' to TEXT", name)
+        statements.append((name, f'ALTER TABLE "dn" ALTER COLUMN "{name}" TYPE TEXT'))
+
+    if not statements:
+        return []
+
+    altered: List[str] = []
+
+    if isinstance(bind, Session):
+        for name, sql in statements:
+            bind.execute(text(sql))
+            altered.append(name)
+        bind.commit()
+    else:
+        with engine_obj.begin() as conn:
+            for name, sql in statements:
+                conn.execute(text(sql))
+                altered.append(name)
+
+    return altered
+
+
 def refresh_dynamic_columns(bind: Engine | Session | None = None) -> List[str]:
     """Reload the list of dynamic columns from the database."""
 
@@ -241,5 +302,6 @@ __all__ = [
     "get_dynamic_columns",
     "get_mutable_dn_columns",
     "ensure_base_dn_columns",
+    "ensure_text_dn_columns",
     "refresh_dynamic_columns",
 ]
