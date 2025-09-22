@@ -5,6 +5,7 @@ import re
 from typing import Iterable, List, Mapping
 
 from sqlalchemy import Column, Text as SAText, inspect as sa_inspect, text
+from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,9 @@ _TEXT_COLUMNS = {
     for column in DN.__table__.columns
     if isinstance(column.type, SAText)
 }
+
+# Tracks whether the DN base schema has already been reconciled for this process.
+_SCHEMA_ENSURED = False
 
 # Base sheet columns that mirror the Google Sheet structure.
 SHEET_BASE_COLUMNS: List[str] = [
@@ -98,7 +102,11 @@ def ensure_base_dn_columns(bind: Engine | Session | None = None) -> List[str]:
 
     engine_obj = _get_engine(bind)
     inspector = sa_inspect(engine_obj)
-    existing_columns = {info["name"] for info in inspector.get_columns("dn")}
+    try:
+        existing_columns = {info["name"] for info in inspector.get_columns("dn")}
+    except NoSuchTableError:
+        logger.debug("DN table does not exist; skipping ensure_base_dn_columns for now")
+        return []
 
     statements: List[tuple[str, str]] = []
     dialect = engine_obj.dialect
@@ -165,7 +173,11 @@ def ensure_text_dn_columns(bind: Engine | Session | None = None) -> List[str]:
         return []
 
     inspector = sa_inspect(engine_obj)
-    columns_info = {info["name"]: info for info in inspector.get_columns("dn")}
+    try:
+        columns_info = {info["name"]: info for info in inspector.get_columns("dn")}
+    except NoSuchTableError:
+        logger.debug("DN table does not exist; skipping ensure_text_dn_columns for now")
+        return []
 
     statements: List[tuple[str, str]] = []
 
@@ -202,9 +214,36 @@ def ensure_text_dn_columns(bind: Engine | Session | None = None) -> List[str]:
     return altered
 
 
+def ensure_dn_schema(bind: Engine | Session | None = None) -> tuple[List[str], List[str]]:
+    """Ensure the DN table schema matches the ORM expectations.
+
+    The helper is idempotent and guarded so we only perform potentially
+    expensive introspection / migrations once per process. Returning the
+    ``(added_columns, altered_columns)`` tuple makes it easy for callers to
+    log any schema adjustments when needed.
+    """
+
+    global _SCHEMA_ENSURED
+    engine_obj = _get_engine(bind)
+    inspector = sa_inspect(engine_obj)
+    if not inspector.has_table("dn"):
+        logger.debug("DN table not found when ensuring schema; will retry later")
+        return ([], [])
+
+    if _SCHEMA_ENSURED:
+        return ([], [])
+
+    added = ensure_base_dn_columns(engine_obj)
+    altered = ensure_text_dn_columns(engine_obj)
+
+    _SCHEMA_ENSURED = True
+    return (added, altered)
+
+
 def refresh_dynamic_columns(bind: Engine | Session | None = None) -> List[str]:
     """Reload the list of dynamic columns from the database."""
 
+    ensure_dn_schema(bind)
     engine_obj = _get_engine(bind)
     inspector = sa_inspect(engine_obj)
     columns_info = inspector.get_columns("dn")
@@ -298,6 +337,7 @@ __all__ = [
     "get_sheet_columns",
     "get_dynamic_columns",
     "get_mutable_dn_columns",
+    "ensure_dn_schema",
     "ensure_base_dn_columns",
     "ensure_text_dn_columns",
     "refresh_dynamic_columns",
