@@ -440,6 +440,7 @@ def search_dn_list(
     *,
     plan_mos_date: str | None = None,
     dn_number: str | None = None,
+    du_id: str | None = None,
     status_delivery: str | None = None,
     lsp: str | None = None,
     region: str | None = None,
@@ -454,6 +455,8 @@ def search_dn_list(
         conds.append(DN.plan_mos_date == plan_mos_date)
     if dn_number:
         conds.append(DN.dn_number == dn_number)
+    if du_id:
+        conds.append(DN.du_id == du_id)
     if status_delivery:
         conds.append(DN.status_delivery == status_delivery)
     if lsp:

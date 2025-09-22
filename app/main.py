@@ -1314,6 +1314,13 @@ def search_dn_list_api(
         description="DN number (legacy alias)",
         include_in_schema=False,
     ),
+    du_id: str | None = Query(None, description="关联 DU ID"),
+    du_id_legacy: str | None = Query(
+        None,
+        alias="duId",
+        description="关联 DU ID (legacy alias)",
+        include_in_schema=False,
+    ),
     status: str | None = Query(None, description="Status delivery"),
     lsp: str | None = Query(None, description="LSP"),
     region: str | None = Query(None, description="Region"),
@@ -1327,11 +1334,16 @@ def search_dn_list_api(
     dn_number = normalize_dn(dn_query_value) if dn_query_value else None
     if dn_number and not DN_RE.fullmatch(dn_number):
         raise HTTPException(status_code=400, detail="Invalid DN number")
+    du_query_value = du_id or du_id_legacy
+    du_id = normalize_du(du_query_value) if du_query_value else None
+    if du_id and not DU_RE.fullmatch(du_id):
+        raise HTTPException(status_code=400, detail=f"Invalid DU ID: {du_id}")
 
     total, items = search_dn_list(
         db,
         plan_mos_date=plan_date,
         dn_number=dn_number,
+        du_id=du_id,
         status_delivery=status.strip() if status else None,
         lsp=lsp.strip() if lsp else None,
         region=region.strip() if region else None,
