@@ -264,6 +264,14 @@ def list_dn_records(db: Session, dn_number: str, limit: int = 50) -> List[DNReco
     return q.all()
 
 
+def list_all_dn_records(db: Session) -> List[DNRecord]:
+    return (
+        db.query(DNRecord)
+        .order_by(DNRecord.created_at.desc(), DNRecord.id.desc())
+        .all()
+    )
+
+
 def search_dn_records(
     db: Session,
     *,
