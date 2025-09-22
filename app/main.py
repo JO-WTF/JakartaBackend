@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 from .settings import settings
 from .db import Base, engine, get_db, SessionLocal
 from .dn_columns import (
+    ensure_base_dn_columns,
+    expand_string_column_lengths,
     extend_dn_columns as extend_dn_table_columns,
     get_sheet_columns,
     refresh_dynamic_columns,
@@ -96,6 +98,8 @@ if settings.storage_driver != "s3":
     app.mount("/uploads", StaticFiles(directory=settings.storage_disk_path, check_dir=False), name="uploads")
 
 Base.metadata.create_all(bind=engine)
+ensure_base_dn_columns(engine)
+expand_string_column_lengths(engine)
 refresh_dynamic_columns(engine)
 
 # ====== 校验与清洗 ======

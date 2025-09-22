@@ -7,9 +7,10 @@ from typing import Iterable, List, Mapping
 from sqlalchemy import Column, Text as SAText, inspect as sa_inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+from sqlalchemy.schema import CreateColumn
 
 from .db import engine
-from .models import DN
+from .models import DN, DNRecord, DURecord
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,39 @@ def _register_column_on_model(column_name: str) -> None:
 
     mapper = sa_inspect(DN)
     mapper.add_property(column_name, table.c[column_name])
+
+
+def ensure_base_dn_columns(bind: Engine | Session | None = None) -> List[str]:
+    """Ensure all base DN columns defined on the model exist in the database."""
+
+    engine_obj = _get_engine(bind)
+    inspector = sa_inspect(engine_obj)
+    existing_columns = {info["name"] for info in inspector.get_columns(DN.__tablename__)}
+
+    missing = [
+        column
+        for column in DN.__table__.columns
+        if column.name not in existing_columns
+    ]
+
+    if not missing:
+        return []
+
+    added: List[str] = []
+    with engine_obj.begin() as conn:
+        for column in missing:
+            column_copy = column.copy()
+            column_ddl = CreateColumn(column_copy).compile(engine_obj.dialect)
+            logger.info(
+                "Adding missing base DN column '%s' to database", column.name
+            )
+            conn.execute(
+                text(f'ALTER TABLE "{DN.__tablename__}" ADD COLUMN {column_ddl}')
+            )
+            added.append(column.name)
+
+    refresh_dynamic_columns(engine_obj)
+    return added
 
 
 def refresh_dynamic_columns(bind: Engine | Session | None = None) -> List[str]:
@@ -174,9 +208,72 @@ def extend_dn_columns(db: Session, column_names: Iterable[str]) -> List[str]:
     return added
 
 
+def expand_string_column_lengths(bind: Engine | Session | None = None) -> List[tuple[str, str, int | None, int]]:
+    """Expand VARCHAR column lengths in the database to match the SQLAlchemy models."""
+
+    engine_obj = _get_engine(bind)
+    inspector = sa_inspect(engine_obj)
+    targets = {
+        DN.__tablename__: DN.__table__,
+        DNRecord.__tablename__: DNRecord.__table__,
+        DURecord.__tablename__: DURecord.__table__,
+    }
+
+    changes: List[tuple[str, str, int | None, int]] = []
+    dialect_name = engine_obj.dialect.name
+    supports_alter = dialect_name not in {"sqlite"}
+
+    with engine_obj.begin() as conn:
+        for table_name, table in targets.items():
+            columns_info = {
+                info["name"]: info for info in inspector.get_columns(table_name)
+            }
+            for column in table.columns:
+                target_length = getattr(column.type, "length", None)
+                if not target_length:
+                    continue
+
+                info = columns_info.get(column.name)
+                if not info:
+                    continue
+
+                current_type = info.get("type")
+                current_length = getattr(current_type, "length", None)
+                if current_length is not None and current_length >= target_length:
+                    continue
+
+                if not supports_alter:
+                    logger.debug(
+                        "Skipping length change for %s.%s on unsupported dialect %s",
+                        table_name,
+                        column.name,
+                        dialect_name,
+                    )
+                    continue
+
+                logger.info(
+                    "Altering %s.%s length from %s to %s",
+                    table_name,
+                    column.name,
+                    current_length,
+                    target_length,
+                )
+                conn.execute(
+                    text(
+                        f'ALTER TABLE "{table_name}" ALTER COLUMN "{column.name}" '
+                        f"TYPE VARCHAR({target_length})"
+                    )
+                )
+                changes.append((table_name, column.name, current_length, target_length))
+
+    return changes
+
+
 __all__ = [
     "SHEET_BASE_COLUMNS",
+    "ensure_base_dn_columns",
     "ensure_dynamic_columns_loaded",
+    "expand_string_column_lengths",
     "extend_dn_columns",
     "filter_assignable_dn_fields",
     "get_sheet_columns",
