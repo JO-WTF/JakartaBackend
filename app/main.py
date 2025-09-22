@@ -31,6 +31,7 @@ from .crud import (
     ensure_dn,
     add_dn_record,
     list_dn_records,
+    list_all_dn_records,
     search_dn_records,
     list_dn_records_by_dn_numbers,
     list_dn_by_dn_numbers,
@@ -1429,6 +1430,29 @@ def search_dn_list_api(
         "page": page,
         "page_size": page_size,
         "items": data,
+    }
+
+
+@app.get("/api/dn/records")
+def get_all_dn_records(db: Session = Depends(get_db)):
+    items = list_all_dn_records(db)
+    return {
+        "ok": True,
+        "total": len(items),
+        "items": [
+            {
+                "id": it.id,
+                "dn_number": it.dn_number,
+                "du_id": it.du_id,
+                "status": it.status,
+                "remark": it.remark,
+                "photo_url": it.photo_url,
+                "lng": it.lng,
+                "lat": it.lat,
+                "created_at": it.created_at.isoformat() if it.created_at else None,
+            }
+            for it in items
+        ],
     }
 
 
