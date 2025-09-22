@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Optional, Iterable, Tuple, List, Set, Dict
+from typing import Any, Optional, Iterable, Tuple, List, Set, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, case, func, or_
 from .models import DU, DURecord, DN, DNRecord, DNSyncLog
@@ -520,3 +520,33 @@ def search_dn_list(
         .all()
     )
     return total, items
+
+
+def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
+    """Return unique DN field values for filter options along with total count."""
+
+    columns: Dict[str, Any] = {
+        "lsp": DN.lsp,
+        "region": DN.region,
+        "plan_mos_date": DN.plan_mos_date,
+        "subcon": DN.subcon,
+        "status_wh": DN.status_wh,
+        "status_delivery": DN.status_delivery,
+    }
+
+    distinct_values: Dict[str, List[str]] = {}
+
+    for key, column in columns.items():
+        trimmed = func.trim(column).label("value")
+        query = (
+            db.query(trimmed)
+            .filter(column.isnot(None))
+            .filter(func.length(trimmed) > 0)
+            .distinct()
+            .order_by(trimmed.asc())
+        )
+        distinct_values[key] = [row.value for row in query.all() if row.value]
+
+    total = db.query(func.count(DN.id)).scalar() or 0
+
+    return distinct_values, int(total)

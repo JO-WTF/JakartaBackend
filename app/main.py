@@ -41,6 +41,7 @@ from .crud import (
     search_dn_list,
     create_dn_sync_log,
     get_latest_dn_sync_log,
+    get_dn_unique_field_values,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse, FileResponse
@@ -1267,6 +1268,17 @@ async def get_dn_stats(date: str):
     ]
 
     return {"ok": True, "data": raw_rows}
+
+
+@app.get("/api/dn/filters")
+def get_dn_filter_options(db: Session = Depends(get_db)):
+    values, total = get_dn_unique_field_values(db)
+
+    data: dict[str, Any] = {**values, "total": total}
+    if "status_delivery" in data:
+        data.setdefault("status_deliver", data["status_delivery"])
+
+    return {"ok": True, "data": data}
 
 
 @app.get("/api/dn/list")
