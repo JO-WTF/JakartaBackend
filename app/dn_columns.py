@@ -4,9 +4,20 @@ import logging
 import re
 from typing import Iterable, List, Mapping
 
-from sqlalchemy import Column, Text as SAText, inspect as sa_inspect, text
+from sqlalchemy import (
+    Column,
+    Text as SAText,
+    inspect as sa_inspect,
+    text,
+    Integer,
+    String,
+    DateTime,
+    MetaData,
+    Table,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 from .db import engine
 from .models import DN
@@ -18,6 +29,9 @@ _BASE_DN_COLUMNS = tuple(column.name for column in DN.__table__.columns)
 _BASE_DN_COLUMN_SET = set(_BASE_DN_COLUMNS)
 # Columns that should never be updated through sheet synchronization.
 _IMMUTABLE_COLUMNS = {"id", "dn_number", "created_at"}
+
+_TIME_KEYWORDS = ("time", "date")
+_EXPLICIT_TEXT_COLUMNS = {"remark", "photo_url", "issue_remark"}
 
 # Base sheet columns that mirror the Google Sheet structure.
 SHEET_BASE_COLUMNS: List[str] = [
@@ -174,10 +188,64 @@ def extend_dn_columns(db: Session, column_names: Iterable[str]) -> List[str]:
     return added
 
 
+def _resolve_column_type(column_name: str):
+    lowered = column_name.lower()
+    if column_name in _EXPLICIT_TEXT_COLUMNS:
+        return SAText
+    if any(keyword in lowered for keyword in _TIME_KEYWORDS):
+        return SAText
+    return String(256)
+
+
+def reset_dn_table(bind: Engine | Session | None = None) -> List[str]:
+    """Drop and recreate the DN table based on the sheet definition."""
+
+    engine_obj = _get_engine(bind)
+    table_name = DN.__tablename__
+
+    metadata = MetaData()
+    with engine_obj.begin() as connection:
+        connection.execute(text(f'DROP TABLE IF EXISTS "{table_name}"'))
+
+    created_columns: List[Column] = [
+        Column("id", Integer, primary_key=True, autoincrement=True),
+        Column("dn_number", String(256), nullable=False, unique=True, index=True),
+    ]
+
+    seen = {"id", "dn_number"}
+    # Preserve all known base columns along with the sheet definition.
+    ordered_columns = list(dict.fromkeys(SHEET_BASE_COLUMNS + list(_BASE_DN_COLUMNS)))
+
+    for name in ordered_columns:
+        if name in seen or name == "created_at":
+            continue
+        column_type = _resolve_column_type(name)
+        created_columns.append(Column(name, column_type, nullable=True))
+        seen.add(name)
+
+    created_columns.append(
+        Column(
+            "created_at",
+            DateTime(timezone=True),
+            nullable=False,
+            server_default=func.now(),
+        )
+    )
+
+    dn_table = Table(table_name, metadata, *created_columns)
+    metadata.create_all(engine_obj, tables=[dn_table])
+
+    # Reset cached dynamic column state as the table has been recreated.
+    refresh_dynamic_columns(engine_obj)
+
+    return [col.name for col in dn_table.columns]
+
+
 __all__ = [
     "SHEET_BASE_COLUMNS",
     "ensure_dynamic_columns_loaded",
     "extend_dn_columns",
+    "reset_dn_table",
     "filter_assignable_dn_fields",
     "get_sheet_columns",
     "get_dynamic_columns",

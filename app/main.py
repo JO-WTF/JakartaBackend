@@ -16,6 +16,7 @@ from .dn_columns import (
     extend_dn_columns as extend_dn_table_columns,
     get_sheet_columns,
     refresh_dynamic_columns,
+    reset_dn_table,
 )
 from .crud import (
     ensure_du,
@@ -478,6 +479,17 @@ def get_du_records(du_id: str, db: Session = Depends(get_db)):
 
 
 # ====== DN 接口 ======
+
+
+@app.post("/api/dn/reset_table")
+def reset_dn_table_api(db: Session = Depends(get_db)):
+    try:
+        columns = reset_dn_table(db)
+    except Exception:
+        logger.error("Failed to reset DN table\n%s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail="failed_to_reset_dn_table")
+
+    return {"ok": True, "columns": columns}
 
 
 @app.post("/api/dn/columns/extend")
