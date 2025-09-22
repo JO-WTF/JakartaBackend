@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Optional, Iterable, Tuple, List, Set, Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, case
+from sqlalchemy import and_, case, func, or_
 from .models import DU, DURecord, DN, DNRecord, DNSyncLog
 from .dn_columns import filter_assignable_dn_fields
 
@@ -442,8 +442,11 @@ def search_dn_list(
     dn_number: str | None = None,
     du_id: str | None = None,
     status_delivery: str | None = None,
+    status_not_empty: bool | None = None,
+    has_coordinate: bool | None = None,
     lsp: str | None = None,
     region: str | None = None,
+    area: str | None = None,
     project_request: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -459,10 +462,44 @@ def search_dn_list(
         conds.append(DN.du_id == du_id)
     if status_delivery:
         conds.append(DN.status_delivery == status_delivery)
+    if status_not_empty is True:
+        conds.append(
+            and_(
+                DN.status.isnot(None),
+                func.length(func.trim(DN.status)) > 0,
+            )
+        )
+    elif status_not_empty is False:
+        conds.append(
+            or_(
+                DN.status.is_(None),
+                func.length(func.trim(DN.status)) == 0,
+            )
+        )
+    if has_coordinate is True:
+        conds.append(
+            and_(
+                DN.lat.isnot(None),
+                func.length(func.trim(DN.lat)) > 0,
+                DN.lng.isnot(None),
+                func.length(func.trim(DN.lng)) > 0,
+            )
+        )
+    elif has_coordinate is False:
+        conds.append(
+            or_(
+                DN.lat.is_(None),
+                DN.lng.is_(None),
+                func.length(func.trim(DN.lat)) == 0,
+                func.length(func.trim(DN.lng)) == 0,
+            )
+        )
     if lsp:
         conds.append(DN.lsp == lsp)
     if region:
         conds.append(DN.region == region)
+    if area:
+        conds.append(DN.area == area)
     if project_request:
         conds.append(DN.project_request == project_request)
 
