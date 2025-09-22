@@ -375,6 +375,29 @@ def list_dn_records_by_dn_numbers(
     return total, items
 
 
+def list_dn_entries_by_dn_numbers(
+    db: Session,
+    dn_numbers: Iterable[str],
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> Tuple[int, List[DN]]:
+    dn_numbers = [x for x in {x for x in dn_numbers if x}]
+    if not dn_numbers:
+        return 0, []
+
+    base_q = db.query(DN).filter(DN.dn_number.in_(dn_numbers))
+
+    total = base_q.count()
+    items = (
+        base_q.order_by(DN.created_at.desc(), DN.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return total, items
+
+
 def get_existing_dn_numbers(db: Session, dn_numbers: Iterable[str]) -> Set[str]:
     unique_numbers = {dn_number for dn_number in dn_numbers if dn_number}
     if not unique_numbers:

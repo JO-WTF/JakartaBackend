@@ -38,6 +38,7 @@ from .crud import (
     get_existing_dn_numbers,
     get_latest_dn_records_map,
     search_dn_list,
+    list_dn_entries_by_dn_numbers,
     create_dn_sync_log,
     get_latest_dn_sync_log,
 )
@@ -728,6 +729,70 @@ def batch_get_dn_records(
             }
             for it in items
         ],
+    }
+
+
+@app.get("/api/dn/list/batch")
+def batch_get_dn_entries(
+    dn_number: Optional[List[str]] = Query(None, description="重复 dn_number 或逗号分隔"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    raw_numbers = dn_number or []
+    flat: list[str] = []
+    for value in raw_numbers:
+        for part in value.split(","):
+            normalized = normalize_dn(part)
+            if normalized:
+                flat.append(normalized)
+
+    flat = [x for x in dict.fromkeys(flat) if x]
+
+    if not flat:
+        raise HTTPException(status_code=400, detail="Missing dn_number")
+
+    invalid = [x for x in flat if not DN_RE.fullmatch(x)]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid DN number(s): {', '.join(invalid)}")
+
+    total, items = list_dn_entries_by_dn_numbers(
+        db, flat, page=page, page_size=page_size
+    )
+
+    latest_records = (
+        get_latest_dn_records_map(db, [it.dn_number for it in items]) if items else {}
+    )
+    sheet_columns = get_sheet_columns()
+
+    data: list[dict[str, Any]] = []
+    for it in items:
+        row: dict[str, Any] = {
+            "id": it.id,
+            "dn_number": it.dn_number,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "status": it.status,
+            "remark": it.remark,
+            "photo_url": it.photo_url,
+            "lng": it.lng,
+            "lat": it.lat,
+        }
+        for column in sheet_columns:
+            if column == "dn_number":
+                continue
+            row[column] = getattr(it, column)
+        latest = latest_records.get(it.dn_number)
+        row["latest_record_created_at"] = (
+            latest.created_at.isoformat() if latest and latest.created_at else None
+        )
+        data.append(row)
+
+    return {
+        "ok": True,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": data,
     }
 
 
