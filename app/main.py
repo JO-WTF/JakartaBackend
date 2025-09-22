@@ -1321,7 +1321,13 @@ def search_dn_list_api(
         description="关联 DU ID (legacy alias)",
         include_in_schema=False,
     ),
-    status: str | None = Query(None, description="Status delivery"),
+    status_delivery: str | None = Query(None, description="Status delivery"),
+    status_delivery_legacy: str | None = Query(
+        None,
+        alias="status",
+        description="Status delivery (legacy alias)",
+        include_in_schema=False,
+    ),
     status_not_empty: bool | None = Query(
         None,
         description="仅返回状态不为空的 DN 记录",
@@ -1333,6 +1339,8 @@ def search_dn_list_api(
     lsp: str | None = Query(None, description="LSP"),
     region: str | None = Query(None, description="Region"),
     area: str | None = Query(None, description="Area"),
+    status_wh: str | None = Query(None, description="Status WH"),
+    subcon: str | None = Query(None, description="Subcon"),
     project: str | None = Query(None, description="Project request"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -1348,17 +1356,22 @@ def search_dn_list_api(
     if du_id and not DU_RE.fullmatch(du_id):
         raise HTTPException(status_code=400, detail=f"Invalid DU ID: {du_id}")
 
+    status_delivery_value = status_delivery or status_delivery_legacy
     total, items = search_dn_list(
         db,
         plan_mos_date=plan_date,
         dn_number=dn_number,
         du_id=du_id,
-        status_delivery=status.strip() if status else None,
+        status_delivery=status_delivery_value.strip()
+        if status_delivery_value
+        else None,
         status_not_empty=status_not_empty,
         has_coordinate=has_coordinate,
         lsp=lsp.strip() if lsp else None,
         region=region.strip() if region else None,
         area=area.strip() if area else None,
+        status_wh=status_wh.strip() if status_wh else None,
+        subcon=subcon.strip() if subcon else None,
         project_request=project.strip() if project else None,
         page=page,
         page_size=page_size,

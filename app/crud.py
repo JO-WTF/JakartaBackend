@@ -447,6 +447,8 @@ def search_dn_list(
     lsp: str | None = None,
     region: str | None = None,
     area: str | None = None,
+    status_wh: str | None = None,
+    subcon: str | None = None,
     project_request: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -500,6 +502,10 @@ def search_dn_list(
         conds.append(DN.region == region)
     if area:
         conds.append(DN.area == area)
+    if status_wh:
+        conds.append(DN.status_wh == status_wh)
+    if subcon:
+        conds.append(DN.subcon == subcon)
     if project_request:
         conds.append(DN.project_request == project_request)
 
