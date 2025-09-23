@@ -858,7 +858,14 @@ MONTH_MAP = {
 }
 
 DATE_FORMATS = [
-    "%d %b %y", "%d %b %Y", "%d-%b-%Y", "%d-%b-%y", "%d%b", "%d %b %y", "%d %b %Y"
+    "%d %b %y",
+    "%d %b %Y",
+    "%d-%b-%Y",
+    "%d-%b-%y",
+    "%d%b",
+    "%d %b %y",
+    "%d %b %Y",
+    "%Y/%m/%d",
 ]
 
 def fetch_plan_sheets(sheet_url):
@@ -876,7 +883,7 @@ def fetch_plan_sheets(sheet_url):
 def parse_date(date_str: str):
     """解析日期字符串"""
     current_year = datetime.now().year
-    
+
     # 替换月份简写
     for incorrect, correct in MONTH_MAP.items():
         date_str = date_str.replace(incorrect, correct)
@@ -889,6 +896,35 @@ def parse_date(date_str: str):
             continue
 
     return date_str
+
+
+def normalize_database_fields(db: Session) -> None:
+    """规范数据库中需要标准化的字段。"""
+
+    dn_sync_logger.debug("Starting database field normalization")
+
+    dn_entries = db.query(DN).filter(DN.plan_mos_date.isnot(None)).all()
+    normalized_plan_dates = 0
+
+    for entry in dn_entries:
+        raw_value = entry.plan_mos_date.strip() if entry.plan_mos_date else None
+        if not raw_value:
+            continue
+
+        parsed_value = parse_date(raw_value)
+        if isinstance(parsed_value, datetime):
+            normalized_value = parsed_value.strftime("%d %b %y")
+            if normalized_value != entry.plan_mos_date:
+                entry.plan_mos_date = normalized_value
+                normalized_plan_dates += 1
+
+    if normalized_plan_dates:
+        db.commit()
+        dn_sync_logger.info(
+            "Normalized plan_mos_date for %d DN rows", normalized_plan_dates
+        )
+    else:
+        dn_sync_logger.debug("No plan_mos_date values required normalization")
 
 def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     """处理工作表数据"""
@@ -1074,6 +1110,8 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         db.execute(upsert_stmt, list(payload_by_number.values()))
         db.commit()
         dn_sync_logger.debug("Bulk upsert committed for %d DN entries", len(payload_by_number))
+
+    normalize_database_fields(db)
 
     dn_sync_logger.info(
         "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, unique_dns=%d, "
