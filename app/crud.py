@@ -412,8 +412,8 @@ def list_dn_by_dn_numbers(
     total = base_q.count()
 
     ordering = case(
+        *[(number, index) for index, number in enumerate(numbers)],
         value=DN.dn_number,
-        whens={number: index for index, number in enumerate(numbers)},
         else_=len(numbers),
     )
 
