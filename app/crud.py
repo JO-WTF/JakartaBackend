@@ -571,3 +571,19 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
     total = db.query(func.count(DN.id)).scalar() or 0
 
     return distinct_values, int(total)
+
+
+def get_dn_status_delivery_counts(db: Session) -> List[tuple[str, int]]:
+    """Return DN counts grouped by status_delivery (empty values treated as "NO STATUS")."""
+
+    status_expr = func.coalesce(
+        func.nullif(func.trim(DN.status_delivery), ""), "NO STATUS"
+    )
+    rows = (
+        db.query(status_expr.label("status_delivery"), func.count(DN.id).label("count"))
+        .group_by(status_expr)
+        .order_by(status_expr.asc())
+        .all()
+    )
+
+    return [(row.status_delivery, int(row.count)) for row in rows]
