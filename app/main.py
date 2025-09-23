@@ -873,6 +873,18 @@ def fetch_plan_sheets(sheet_url):
     sheets = sheet_url.worksheets()
     dn_sync_logger.debug("Spreadsheet has %d worksheets", len(sheets))
     plan_sheets = [sheet for sheet in sheets if sheet.title.startswith("Plan MOS")]
+    if plan_sheets:
+        sheet_titles = [sheet.title for sheet in plan_sheets]
+        preview_titles = ", ".join(sheet_titles[:3])
+        if len(sheet_titles) > 3:
+            preview_titles = f"{preview_titles}, ..."
+        dn_sync_logger.info(
+            "Found %d 'Plan MOS' sheets to sync (%s)",
+            len(plan_sheets),
+            preview_titles,
+        )
+    else:
+        dn_sync_logger.info("No 'Plan MOS' sheets available for syncing")
     dn_sync_logger.debug(
         "Filtered %d plan sheets: %s",
         len(plan_sheets),
@@ -953,9 +965,12 @@ def process_all_sheets(sh) -> pd.DataFrame:
     columns = get_sheet_columns()
     all_data = [process_sheet_data(sheet, columns) for sheet in plan_sheets]
     if not all_data:
-        dn_sync_logger.debug("No plan sheets found to process")
+        dn_sync_logger.info("No plan sheets found to process; returning empty DataFrame")
         return pd.DataFrame(columns=columns)
     combined = pd.concat(all_data, ignore_index=True)
+    dn_sync_logger.info(
+        "Combined sheet data into DataFrame with %d rows", len(combined)
+    )
     dn_sync_logger.debug(
         "Combined DataFrame has %d rows and %d columns",
         len(combined),
@@ -1002,6 +1017,7 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
     total_rows = len(combined_df) if not combined_df.empty else 0
     skipped_missing_number = 0
     skipped_empty_payload = 0
+    dn_sync_logger.info("Preparing to process %d sheet rows", total_rows)
     dn_sync_logger.debug("DataFrame contains %d total rows", total_rows)
 
     if not combined_df.empty:
@@ -1088,6 +1104,12 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         len(numbers_to_create),
         len(numbers_to_update),
     )
+    dn_sync_logger.info(
+        "DN payload summary: create=%d, update=%d, bulk_columns=%d",
+        len(numbers_to_create),
+        len(numbers_to_update),
+        len(bulk_update_columns),
+    )
 
     if payload_by_number:
         insert_stmt = insert(DN)
@@ -1110,6 +1132,12 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         db.execute(upsert_stmt, list(payload_by_number.values()))
         db.commit()
         dn_sync_logger.debug("Bulk upsert committed for %d DN entries", len(payload_by_number))
+        dn_sync_logger.info(
+            "Upserted %d DN records (create=%d, update=%d)",
+            len(payload_by_number),
+            len(numbers_to_create),
+            len(numbers_to_update),
+        )
 
     normalize_database_fields(db)
 
