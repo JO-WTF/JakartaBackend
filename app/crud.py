@@ -573,15 +573,32 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
     return distinct_values, int(total)
 
 
-def get_dn_status_delivery_counts(db: Session) -> List[tuple[str, int]]:
-    """Return DN counts grouped by status_delivery (empty values treated as "NO STATUS")."""
+def get_dn_status_delivery_counts(
+    db: Session,
+    *,
+    lsp: Optional[str] = None,
+    plan_mos_date: Optional[str] = None,
+) -> List[tuple[str, int]]:
+    """Return DN counts grouped by status_delivery with optional filtering."""
 
     status_expr = func.coalesce(
         func.nullif(func.trim(DN.status_delivery), ""), "NO STATUS"
     )
+
+    query = db.query(
+        status_expr.label("status_delivery"), func.count(DN.id).label("count")
+    )
+
+    trimmed_lsp = lsp.strip() if lsp else None
+    if trimmed_lsp:
+        query = query.filter(func.trim(DN.lsp) == trimmed_lsp)
+
+    trimmed_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
+    if trimmed_plan_mos_date:
+        query = query.filter(func.trim(DN.plan_mos_date) == trimmed_plan_mos_date)
+
     rows = (
-        db.query(status_expr.label("status_delivery"), func.count(DN.id).label("count"))
-        .group_by(status_expr)
+        query.group_by(status_expr)
         .order_by(status_expr.asc())
         .all()
     )

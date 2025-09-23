@@ -1285,8 +1285,22 @@ def get_dn_filter_options(db: Session = Depends(get_db)):
 
 
 @app.get("/api/dn/status-delivery/stats")
-def get_dn_status_delivery_stats(db: Session = Depends(get_db)):
-    stats = get_dn_status_delivery_counts(db)
+def get_dn_status_delivery_stats(
+    lsp: Optional[str] = Query(default=None),
+    plan_mos_date: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    normalized_lsp = lsp.strip() if lsp else None
+
+    normalized_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
+    if not normalized_plan_mos_date:
+        normalized_plan_mos_date = datetime.now().strftime("%d-%b-%y")
+
+    stats = get_dn_status_delivery_counts(
+        db,
+        lsp=normalized_lsp,
+        plan_mos_date=normalized_plan_mos_date,
+    )
     total = sum(count for _, count in stats)
 
     data = [
