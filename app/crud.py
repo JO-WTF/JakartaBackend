@@ -484,7 +484,12 @@ def search_dn_list(
     if du_id:
         conds.append(DN.du_id == du_id)
     if status_delivery:
-        conds.append(DN.status_delivery == status_delivery)
+        trimmed_status_delivery = status_delivery.strip()
+        if trimmed_status_delivery:
+            conds.append(
+                func.lower(func.trim(DN.status_delivery))
+                == trimmed_status_delivery.lower()
+            )
     if status_not_empty is True:
         conds.append(
             and_(
