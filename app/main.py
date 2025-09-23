@@ -77,6 +77,13 @@ if not any(
     )
     file_handler.setLevel(logging.DEBUG)
     dn_sync_logger.addHandler(file_handler)
+if not any(isinstance(handler, logging.StreamHandler) for handler in dn_sync_logger.handlers):
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    )
+    stream_handler.setLevel(logging.DEBUG)
+    dn_sync_logger.addHandler(stream_handler)
 dn_sync_logger.setLevel(logging.DEBUG)
 dn_sync_logger.propagate = False
 
