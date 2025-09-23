@@ -858,7 +858,14 @@ MONTH_MAP = {
 }
 
 DATE_FORMATS = [
-    "%d %b %y", "%d %b %Y", "%d-%b-%Y", "%d-%b-%y", "%d%b", "%d %b %y", "%d %b %Y"
+    "%d %b %y",
+    "%d %b %Y",
+    "%d-%b-%Y",
+    "%d-%b-%y",
+    "%d%b",
+    "%d %b %y",
+    "%d %b %Y",
+    "%Y/%m/%d",
 ]
 
 def fetch_plan_sheets(sheet_url):
@@ -866,6 +873,18 @@ def fetch_plan_sheets(sheet_url):
     sheets = sheet_url.worksheets()
     dn_sync_logger.debug("Spreadsheet has %d worksheets", len(sheets))
     plan_sheets = [sheet for sheet in sheets if sheet.title.startswith("Plan MOS")]
+    if plan_sheets:
+        sheet_titles = [sheet.title for sheet in plan_sheets]
+        preview_titles = ", ".join(sheet_titles[:3])
+        if len(sheet_titles) > 3:
+            preview_titles = f"{preview_titles}, ..."
+        dn_sync_logger.info(
+            "Found %d 'Plan MOS' sheets to sync (%s)",
+            len(plan_sheets),
+            preview_titles,
+        )
+    else:
+        dn_sync_logger.info("No 'Plan MOS' sheets available for syncing")
     dn_sync_logger.debug(
         "Filtered %d plan sheets: %s",
         len(plan_sheets),
@@ -876,7 +895,7 @@ def fetch_plan_sheets(sheet_url):
 def parse_date(date_str: str):
     """解析日期字符串"""
     current_year = datetime.now().year
-    
+
     # 替换月份简写
     for incorrect, correct in MONTH_MAP.items():
         date_str = date_str.replace(incorrect, correct)
@@ -889,6 +908,35 @@ def parse_date(date_str: str):
             continue
 
     return date_str
+
+
+def normalize_database_fields(db: Session) -> None:
+    """规范数据库中需要标准化的字段。"""
+
+    dn_sync_logger.debug("Starting database field normalization")
+
+    dn_entries = db.query(DN).filter(DN.plan_mos_date.isnot(None)).all()
+    normalized_plan_dates = 0
+
+    for entry in dn_entries:
+        raw_value = entry.plan_mos_date.strip() if entry.plan_mos_date else None
+        if not raw_value:
+            continue
+
+        parsed_value = parse_date(raw_value)
+        if isinstance(parsed_value, datetime):
+            normalized_value = parsed_value.strftime("%d %b %y")
+            if normalized_value != entry.plan_mos_date:
+                entry.plan_mos_date = normalized_value
+                normalized_plan_dates += 1
+
+    if normalized_plan_dates:
+        db.commit()
+        dn_sync_logger.info(
+            "Normalized plan_mos_date for %d DN rows", normalized_plan_dates
+        )
+    else:
+        dn_sync_logger.debug("No plan_mos_date values required normalization")
 
 def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     """处理工作表数据"""
@@ -917,9 +965,12 @@ def process_all_sheets(sh) -> pd.DataFrame:
     columns = get_sheet_columns()
     all_data = [process_sheet_data(sheet, columns) for sheet in plan_sheets]
     if not all_data:
-        dn_sync_logger.debug("No plan sheets found to process")
+        dn_sync_logger.info("No plan sheets found to process; returning empty DataFrame")
         return pd.DataFrame(columns=columns)
     combined = pd.concat(all_data, ignore_index=True)
+    dn_sync_logger.info(
+        "Combined sheet data into DataFrame with %d rows", len(combined)
+    )
     dn_sync_logger.debug(
         "Combined DataFrame has %d rows and %d columns",
         len(combined),
@@ -966,6 +1017,7 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
     total_rows = len(combined_df) if not combined_df.empty else 0
     skipped_missing_number = 0
     skipped_empty_payload = 0
+    dn_sync_logger.info("Preparing to process %d sheet rows", total_rows)
     dn_sync_logger.debug("DataFrame contains %d total rows", total_rows)
 
     if not combined_df.empty:
@@ -1052,6 +1104,12 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         len(numbers_to_create),
         len(numbers_to_update),
     )
+    dn_sync_logger.info(
+        "DN payload summary: create=%d, update=%d, bulk_columns=%d",
+        len(numbers_to_create),
+        len(numbers_to_update),
+        len(bulk_update_columns),
+    )
 
     if payload_by_number:
         insert_stmt = insert(DN)
@@ -1074,6 +1132,14 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
         db.execute(upsert_stmt, list(payload_by_number.values()))
         db.commit()
         dn_sync_logger.debug("Bulk upsert committed for %d DN entries", len(payload_by_number))
+        dn_sync_logger.info(
+            "Upserted %d DN records (create=%d, update=%d)",
+            len(payload_by_number),
+            len(numbers_to_create),
+            len(numbers_to_update),
+        )
+
+    normalize_database_fields(db)
 
     dn_sync_logger.info(
         "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, unique_dns=%d, "
