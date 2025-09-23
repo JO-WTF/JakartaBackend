@@ -36,6 +36,7 @@ from .crud import (
     list_dn_records_by_dn_numbers,
     list_dn_by_dn_numbers,
     update_dn_record,
+    delete_dn,
     delete_dn_record,
     get_existing_dn_numbers,
     get_latest_dn_records_map,
@@ -43,6 +44,7 @@ from .crud import (
     create_dn_sync_log,
     get_latest_dn_sync_log,
     get_dn_unique_field_values,
+    get_dn_status_delivery_counts,
 )
 from .storage import save_file
 from fastapi.responses import JSONResponse, FileResponse
@@ -1282,6 +1284,19 @@ def get_dn_filter_options(db: Session = Depends(get_db)):
     return {"ok": True, "data": data}
 
 
+@app.get("/api/dn/status-delivery/stats")
+def get_dn_status_delivery_stats(db: Session = Depends(get_db)):
+    stats = get_dn_status_delivery_counts(db)
+    total = sum(count for _, count in stats)
+
+    data = [
+        {"status_delivery": status, "count": count}
+        for status, count in stats
+    ]
+
+    return {"ok": True, "data": data, "total": total}
+
+
 @app.get("/api/dn/list")
 async def get_dn_list(db: Session = Depends(get_db)):
     items = db.query(DN).order_by(DN.dn_number.asc()).all()
@@ -1516,6 +1531,19 @@ def batch_search_dn_list(
         "page_size": page_size,
         "items": data,
     }
+
+
+@app.delete("/api/dn/{dn_number}")
+def remove_dn(dn_number: str, db: Session = Depends(get_db)):
+    normalized_number = normalize_dn(dn_number)
+    if not DN_RE.fullmatch(normalized_number):
+        raise HTTPException(status_code=400, detail="Invalid DN number")
+
+    ok = delete_dn(db, normalized_number)
+    if not ok:
+        raise HTTPException(status_code=404, detail="DN not found")
+
+    return {"ok": True}
 
 
 @app.get("/api/dn/{dn_number}")

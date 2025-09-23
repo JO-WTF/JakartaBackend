@@ -184,6 +184,19 @@ def ensure_dn(db: Session, dn_number: str, **fields: str | None) -> DN:
     return dn
 
 
+def delete_dn(db: Session, dn_number: str) -> bool:
+    dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
+    if not dn:
+        return False
+
+    db.query(DNRecord).filter(DNRecord.dn_number == dn_number).delete(
+        synchronize_session=False
+    )
+    db.delete(dn)
+    db.commit()
+    return True
+
+
 def add_dn_record(
     db: Session,
     dn_number: str,
@@ -558,3 +571,19 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
     total = db.query(func.count(DN.id)).scalar() or 0
 
     return distinct_values, int(total)
+
+
+def get_dn_status_delivery_counts(db: Session) -> List[tuple[str, int]]:
+    """Return DN counts grouped by status_delivery (empty values treated as "NO STATUS")."""
+
+    status_expr = func.coalesce(
+        func.nullif(func.trim(DN.status_delivery), ""), "NO STATUS"
+    )
+    rows = (
+        db.query(status_expr.label("status_delivery"), func.count(DN.id).label("count"))
+        .group_by(status_expr)
+        .order_by(status_expr.asc())
+        .all()
+    )
+
+    return [(row.status_delivery, int(row.count)) for row in rows]
