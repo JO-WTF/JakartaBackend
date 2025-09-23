@@ -971,6 +971,11 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
     if not combined_df.empty:
         for record in combined_df.to_dict(orient="records"):
             cleaned = {key: normalize_sheet_value(value) for key, value in record.items()}
+            plan_mos_date_value = cleaned.get("plan_mos_date")
+            if isinstance(plan_mos_date_value, str) and plan_mos_date_value:
+                parsed_plan_mos_date = parse_date(plan_mos_date_value)
+                if isinstance(parsed_plan_mos_date, datetime):
+                    cleaned["plan_mos_date"] = parsed_plan_mos_date.strftime("%d %b %y")
             raw_number = cleaned.get("dn_number")
             raw_number_str = str(raw_number).strip() if raw_number is not None else ""
             normalized_number = normalize_dn(raw_number_str) if raw_number_str else ""
