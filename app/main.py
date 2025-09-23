@@ -1,6 +1,6 @@
 # app/main.py
 from fastapi import Body, FastAPI, UploadFile, File, Form, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -937,13 +937,38 @@ def normalize_database_fields(db: Session) -> None:
                 entry.plan_mos_date = normalized_value
                 normalized_plan_dates += 1
 
-    if normalized_plan_dates:
+    status_entries = (
+        db.query(DN)
+        .filter(
+            or_(
+                DN.status_delivery.is_(None),
+                func.trim(DN.status_delivery) == "",
+            )
+        )
+        .all()
+    )
+    normalized_status_delivery = 0
+
+    for entry in status_entries:
+        entry.status_delivery = "No Status"
+        normalized_status_delivery += 1
+
+    if normalized_plan_dates or normalized_status_delivery:
         db.commit()
+
+    if normalized_plan_dates:
         dn_sync_logger.info(
             "Normalized plan_mos_date for %d DN rows", normalized_plan_dates
         )
     else:
         dn_sync_logger.debug("No plan_mos_date values required normalization")
+
+    if normalized_status_delivery:
+        dn_sync_logger.info(
+            "Normalized status_delivery for %d DN rows", normalized_status_delivery
+        )
+    else:
+        dn_sync_logger.debug("No status_delivery values required normalization")
 
 def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     """处理工作表数据"""
