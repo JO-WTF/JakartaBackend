@@ -1294,7 +1294,7 @@ def get_dn_status_delivery_stats(
 
     normalized_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
     if not normalized_plan_mos_date:
-        normalized_plan_mos_date = datetime.now().strftime("%d-%b-%y")
+        normalized_plan_mos_date = datetime.now().strftime("%d %b %y")
 
     stats = get_dn_status_delivery_counts(
         db,
