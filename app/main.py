@@ -36,6 +36,7 @@ from .crud import (
     list_dn_records_by_dn_numbers,
     list_dn_by_dn_numbers,
     update_dn_record,
+    delete_dn,
     delete_dn_record,
     get_existing_dn_numbers,
     get_latest_dn_records_map,
@@ -1516,6 +1517,19 @@ def batch_search_dn_list(
         "page_size": page_size,
         "items": data,
     }
+
+
+@app.delete("/api/dn/{dn_number}")
+def remove_dn(dn_number: str, db: Session = Depends(get_db)):
+    normalized_number = normalize_dn(dn_number)
+    if not DN_RE.fullmatch(normalized_number):
+        raise HTTPException(status_code=400, detail="Invalid DN number")
+
+    ok = delete_dn(db, normalized_number)
+    if not ok:
+        raise HTTPException(status_code=404, detail="DN not found")
+
+    return {"ok": True}
 
 
 @app.get("/api/dn/{dn_number}")

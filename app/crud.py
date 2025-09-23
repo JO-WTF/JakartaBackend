@@ -184,6 +184,19 @@ def ensure_dn(db: Session, dn_number: str, **fields: str | None) -> DN:
     return dn
 
 
+def delete_dn(db: Session, dn_number: str) -> bool:
+    dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
+    if not dn:
+        return False
+
+    db.query(DNRecord).filter(DNRecord.dn_number == dn_number).delete(
+        synchronize_session=False
+    )
+    db.delete(dn)
+    db.commit()
+    return True
+
+
 def add_dn_record(
     db: Session,
     dn_number: str,
