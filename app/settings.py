@@ -1,4 +1,4 @@
-# app/settings.py
+# 应用配置定义
 from pydantic_settings import BaseSettings
 import os
 
@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     s3_access_key: str = os.getenv("S3_ACCESS_KEY", "")
     s3_secret_key: str = os.getenv("S3_SECRET_KEY", "")
     storage_base_url: str = os.getenv("STORAGE_BASE_URL", "")
+    google_api_key: str | None = os.getenv("GOOGLE_API_KEY")
+    google_sheet_url: str | None = os.getenv("GOOGLE_SHEET_URL")
+    dn_sheet_sync_interval_seconds: int = int(
+        os.getenv("DN_SHEET_SYNC_INTERVAL_SECONDS", "300")
+    )
 
 settings = Settings()
 

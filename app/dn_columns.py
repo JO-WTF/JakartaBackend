@@ -1,3 +1,5 @@
+"""维护 DN 表可扩展列的辅助函数。"""
+
 from __future__ import annotations
 
 import logging
@@ -13,13 +15,13 @@ from .models import DN
 
 logger = logging.getLogger(__name__)
 
-# Base columns defined on the SQLAlchemy model when the application starts.
+# 应用启动时 SQLAlchemy 模型自带的基础字段。
 _BASE_DN_COLUMNS = tuple(column.name for column in DN.__table__.columns)
 _BASE_DN_COLUMN_SET = set(_BASE_DN_COLUMNS)
-# Columns that should never be updated through sheet synchronization.
+# 不允许通过表格同步更新的字段。
 _IMMUTABLE_COLUMNS = {"id", "dn_number", "created_at"}
 
-# Base sheet columns that mirror the Google Sheet structure.
+# 与 Google Sheet 结构一致的基础列。
 SHEET_BASE_COLUMNS: List[str] = [
     "dn_number",
     "du_id",
@@ -55,13 +57,15 @@ SHEET_BASE_COLUMNS: List[str] = [
     "plan_mos_date",
 ]
 
-# Cache of dynamically added DN columns (in table order).
+# 记录动态新增的 DN 列（按表结构顺序）。
 _dynamic_columns: List[str] = []
 
 _COLUMN_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _get_engine(bind: Engine | Session | None = None) -> Engine:
+    """根据绑定对象解析出 SQLAlchemy 引擎。"""
+
     if isinstance(bind, Session):
         if bind.bind is None:
             raise RuntimeError("Session is not bound to an engine")
@@ -72,7 +76,7 @@ def _get_engine(bind: Engine | Session | None = None) -> Engine:
 
 
 def _register_column_on_model(column_name: str) -> None:
-    """Attach a dynamic column to the SQLAlchemy model for ORM access."""
+    """在 SQLAlchemy 模型上注册动态列以供 ORM 使用。"""
 
     table = DN.__table__
     if column_name in table.c:
@@ -87,7 +91,7 @@ def _register_column_on_model(column_name: str) -> None:
 
 
 def refresh_dynamic_columns(bind: Engine | Session | None = None) -> List[str]:
-    """Reload the list of dynamic columns from the database."""
+    """从数据库重新加载动态列列表。"""
 
     engine_obj = _get_engine(bind)
     inspector = sa_inspect(engine_obj)
@@ -107,19 +111,27 @@ def refresh_dynamic_columns(bind: Engine | Session | None = None) -> List[str]:
 
 
 def ensure_dynamic_columns_loaded(bind: Engine | Session | None = None) -> None:
+    """在缓存为空时重新加载动态列。"""
+
     if not _dynamic_columns:
         refresh_dynamic_columns(bind)
 
 
 def get_dynamic_columns() -> List[str]:
+    """返回当前已知的动态列列表。"""
+
     return list(_dynamic_columns)
 
 
 def get_sheet_columns() -> List[str]:
+    """返回同步时使用的所有列名。"""
+
     return SHEET_BASE_COLUMNS + list(_dynamic_columns)
 
 
 def get_mutable_dn_columns() -> List[str]:
+    """获取允许被更新的 DN 列集合。"""
+
     ensure_dynamic_columns_loaded()
     allowed = [
         column
@@ -130,7 +142,7 @@ def get_mutable_dn_columns() -> List[str]:
 
 
 def filter_assignable_dn_fields(fields: Mapping[str, object]) -> dict[str, object]:
-    """Return a dict that only includes DN columns that can be updated."""
+    """返回仅包含可写 DN 列的字段字典。"""
 
     ensure_dynamic_columns_loaded()
     allowed = set(get_mutable_dn_columns())
@@ -142,7 +154,7 @@ def filter_assignable_dn_fields(fields: Mapping[str, object]) -> dict[str, objec
 
 
 def extend_dn_columns(db: Session, column_names: Iterable[str]) -> List[str]:
-    """Ensure the DN table contains the provided columns."""
+    """确保 DN 表新增指定列。"""
 
     ensure_dynamic_columns_loaded(db)
     engine_obj = _get_engine(db)
@@ -169,7 +181,7 @@ def extend_dn_columns(db: Session, column_names: Iterable[str]) -> List[str]:
 
     if added:
         db.commit()
-        # Update ORM mapping and cache
+        # 更新 ORM 映射与缓存
         refresh_dynamic_columns(engine_obj)
     return added
 
