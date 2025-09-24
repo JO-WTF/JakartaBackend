@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional, Iterable, Tuple, List, Set, Dict
+from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, case, func, or_
 from .models import DU, DURecord, DN, DNRecord, DNSyncLog
@@ -459,17 +459,17 @@ def get_latest_dn_records_map(db: Session, dn_numbers: Iterable[str]) -> Dict[st
 def search_dn_list(
     db: Session,
     *,
-    plan_mos_date: str | None = None,
+    plan_mos_dates: Sequence[str] | None = None,
     dn_number: str | None = None,
     du_id: str | None = None,
-    status_delivery: str | None = None,
+    status_delivery_values: Sequence[str] | None = None,
     status_not_empty: bool | None = None,
     has_coordinate: bool | None = None,
-    lsp: str | None = None,
-    region: str | None = None,
+    lsp_values: Sequence[str] | None = None,
+    region_values: Sequence[str] | None = None,
     area: str | None = None,
-    status_wh: str | None = None,
-    subcon: str | None = None,
+    status_wh_values: Sequence[str] | None = None,
+    subcon_values: Sequence[str] | None = None,
     project_request: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -477,19 +477,26 @@ def search_dn_list(
     base_q = db.query(DN)
     conds = []
 
-    if plan_mos_date:
-        conds.append(DN.plan_mos_date == plan_mos_date)
+    trimmed_plan_mos_dates = [
+        value.strip()
+        for value in (plan_mos_dates or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if trimmed_plan_mos_dates:
+        conds.append(func.trim(DN.plan_mos_date).in_(trimmed_plan_mos_dates))
     if dn_number:
         conds.append(DN.dn_number == dn_number)
     if du_id:
         conds.append(DN.du_id == du_id)
-    if status_delivery:
-        trimmed_status_delivery = status_delivery.strip()
-        if trimmed_status_delivery:
-            conds.append(
-                func.lower(func.trim(DN.status_delivery))
-                == trimmed_status_delivery.lower()
-            )
+    normalized_status_delivery = [
+        value.strip().lower()
+        for value in (status_delivery_values or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if normalized_status_delivery:
+        conds.append(
+            func.lower(func.trim(DN.status_delivery)).in_(normalized_status_delivery)
+        )
     if status_not_empty is True:
         conds.append(
             and_(
@@ -522,16 +529,36 @@ def search_dn_list(
                 func.length(func.trim(DN.lng)) == 0,
             )
         )
-    if lsp:
-        conds.append(DN.lsp == lsp)
-    if region:
-        conds.append(DN.region == region)
+    trimmed_lsp_values = [
+        value.strip()
+        for value in (lsp_values or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if trimmed_lsp_values:
+        conds.append(func.trim(DN.lsp).in_(trimmed_lsp_values))
+    trimmed_region_values = [
+        value.strip()
+        for value in (region_values or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if trimmed_region_values:
+        conds.append(func.trim(DN.region).in_(trimmed_region_values))
     if area:
         conds.append(DN.area == area)
-    if status_wh:
-        conds.append(DN.status_wh == status_wh)
-    if subcon:
-        conds.append(DN.subcon == subcon)
+    trimmed_status_wh_values = [
+        value.strip()
+        for value in (status_wh_values or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if trimmed_status_wh_values:
+        conds.append(func.trim(DN.status_wh).in_(trimmed_status_wh_values))
+    trimmed_subcon_values = [
+        value.strip()
+        for value in (subcon_values or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if trimmed_subcon_values:
+        conds.append(func.trim(DN.subcon).in_(trimmed_subcon_values))
     if project_request:
         conds.append(DN.project_request == project_request)
 

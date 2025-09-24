@@ -213,6 +213,48 @@ def _normalize_batch_dn_numbers(*value_lists: Optional[List[str]]) -> list[str]:
     return numbers
 
 
+def _collect_query_values(*values: Any) -> list[str] | None:
+    """Normalize query values supporting repeated or comma-separated entries."""
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    def _add_candidate(candidate: Any) -> None:
+        if not isinstance(candidate, str):
+            return
+
+        parts = [candidate]
+        if "," in candidate:
+            parts = candidate.split(",")
+
+        for part in parts:
+            trimmed = part.strip()
+            if not trimmed:
+                continue
+            if trimmed in seen:
+                continue
+            seen.add(trimmed)
+            normalized.append(trimmed)
+
+    for value in values:
+        if value is None:
+            continue
+
+        if isinstance(value, str):
+            _add_candidate(value)
+            continue
+
+        try:
+            iterator = iter(value)
+        except TypeError:
+            continue
+
+        for candidate in iterator:
+            _add_candidate(candidate)
+
+    return normalized or None
+
+
 # ====== 基础健康检查 ======
 @app.get("/")
 def healthz():
@@ -1451,7 +1493,7 @@ async def get_dn_list(db: Session = Depends(get_db)):
 
 @app.get("/api/dn/list/search")
 def search_dn_list_api(
-    date: str | None = Query(None, description="Plan MOS date"),
+    date: Optional[List[str]] = Query(None, description="Plan MOS date"),
     dn_number: str | None = Query(None, description="DN number"),
     dnnumber_legacy: str | None = Query(
         None,
@@ -1466,8 +1508,8 @@ def search_dn_list_api(
         description="关联 DU ID (legacy alias)",
         include_in_schema=False,
     ),
-    status_delivery: str | None = Query(None, description="Status delivery"),
-    status_delivery_legacy: str | None = Query(
+    status_delivery: Optional[List[str]] = Query(None, description="Status delivery"),
+    status_delivery_legacy: Optional[List[str]] = Query(
         None,
         alias="status",
         description="Status delivery (legacy alias)",
@@ -1481,17 +1523,16 @@ def search_dn_list_api(
         None,
         description="根据是否存在经纬度筛选 DN 记录",
     ),
-    lsp: str | None = Query(None, description="LSP"),
-    region: str | None = Query(None, description="Region"),
+    lsp: Optional[List[str]] = Query(None, description="LSP"),
+    region: Optional[List[str]] = Query(None, description="Region"),
     area: str | None = Query(None, description="Area"),
-    status_wh: str | None = Query(None, description="Status WH"),
-    subcon: str | None = Query(None, description="Subcon"),
+    status_wh: Optional[List[str]] = Query(None, description="Status WH"),
+    subcon: Optional[List[str]] = Query(None, description="Subcon"),
     project: str | None = Query(None, description="Project request"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    plan_date = date.strip() if date else None
     dn_query_value = dn_number or dnnumber_legacy
     dn_number = normalize_dn(dn_query_value) if dn_query_value else None
     if dn_number and not DN_RE.fullmatch(dn_number):
@@ -1501,23 +1542,31 @@ def search_dn_list_api(
     if du_id and not DU_RE.fullmatch(du_id):
         raise HTTPException(status_code=400, detail=f"Invalid DU ID: {du_id}")
 
-    status_delivery_value = status_delivery or status_delivery_legacy
+    plan_mos_dates = _collect_query_values(date)
+    status_delivery_values = _collect_query_values(
+        status_delivery, status_delivery_legacy
+    )
+    lsp_values = _collect_query_values(lsp)
+    region_values = _collect_query_values(region)
+    status_wh_values = _collect_query_values(status_wh)
+    subcon_values = _collect_query_values(subcon)
+    area_value = area.strip() if area else None
+    project_value = project.strip() if project else None
+
     total, items = search_dn_list(
         db,
-        plan_mos_date=plan_date,
+        plan_mos_dates=plan_mos_dates,
         dn_number=dn_number,
         du_id=du_id,
-        status_delivery=status_delivery_value.strip()
-        if status_delivery_value
-        else None,
+        status_delivery_values=status_delivery_values,
         status_not_empty=status_not_empty,
         has_coordinate=has_coordinate,
-        lsp=lsp.strip() if lsp else None,
-        region=region.strip() if region else None,
-        area=area.strip() if area else None,
-        status_wh=status_wh.strip() if status_wh else None,
-        subcon=subcon.strip() if subcon else None,
-        project_request=project.strip() if project else None,
+        lsp_values=lsp_values,
+        region_values=region_values,
+        area=area_value,
+        status_wh_values=status_wh_values,
+        subcon_values=subcon_values,
+        project_request=project_value,
         page=page,
         page_size=page_size,
     )
