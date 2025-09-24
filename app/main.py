@@ -1511,9 +1511,14 @@ def search_dn_list_api(
     status_delivery: Optional[List[str]] = Query(None, description="Status delivery"),
     status_delivery_legacy: Optional[List[str]] = Query(
         None,
-        alias="status",
+        alias="statusDelivery",
         description="Status delivery (legacy alias)",
         include_in_schema=False,
+    ),
+    status_values_param: Optional[List[str]] = Query(
+        None,
+        alias="status",
+        description="Status",
     ),
     status_not_empty: bool | None = Query(
         None,
@@ -1546,6 +1551,7 @@ def search_dn_list_api(
     status_delivery_values = _collect_query_values(
         status_delivery, status_delivery_legacy
     )
+    status_values = _collect_query_values(status_values_param)
     lsp_values = _collect_query_values(lsp)
     region_values = _collect_query_values(region)
     status_wh_values = _collect_query_values(status_wh)
@@ -1559,6 +1565,7 @@ def search_dn_list_api(
         dn_number=dn_number,
         du_id=du_id,
         status_delivery_values=status_delivery_values,
+        status_values=status_values,
         status_not_empty=status_not_empty,
         has_coordinate=has_coordinate,
         lsp_values=lsp_values,

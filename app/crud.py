@@ -462,6 +462,7 @@ def search_dn_list(
     plan_mos_dates: Sequence[str] | None = None,
     dn_number: str | None = None,
     du_id: str | None = None,
+    status_values: Sequence[str] | None = None,
     status_delivery_values: Sequence[str] | None = None,
     status_not_empty: bool | None = None,
     has_coordinate: bool | None = None,
@@ -488,6 +489,13 @@ def search_dn_list(
         conds.append(DN.dn_number == dn_number)
     if du_id:
         conds.append(DN.du_id == du_id)
+    normalized_status_values = [
+        value.strip().lower()
+        for value in (status_values or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if normalized_status_values:
+        conds.append(func.lower(func.trim(DN.status)).in_(normalized_status_values))
     normalized_status_delivery = [
         value.strip().lower()
         for value in (status_delivery_values or [])
