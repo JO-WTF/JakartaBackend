@@ -11,6 +11,7 @@ ENV/
 .env
 .env.*
 *.env
+!.env
 
 # Python tooling
 .mypy_cache/

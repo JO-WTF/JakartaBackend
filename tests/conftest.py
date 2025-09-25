@@ -14,12 +14,12 @@ os.environ.setdefault(
     f"sqlite:///{TEST_DB_PATH.as_posix()}?check_same_thread=false&sslmode=disable",
 )
 os.environ.setdefault("DN_SYNC_LOG_PATH", str(ROOT / "test_dn_sync.log"))
-os.environ.setdefault("storage_DISK_PATH", str(ROOT / "test_uploads"))
+os.environ.setdefault("STORAGE_DISK_PATH", str(ROOT / "test_uploads"))
 os.environ.setdefault("GOOGLE_API_KEY", "test-api-key")
 os.environ.setdefault("GOOGLE_SHEET_URL", "https://example.com/test-sheet")
 os.environ.setdefault("DN_SHEET_SYNC_INTERVAL_SECONDS", "60")
 
-upload_dir = Path(os.environ["storage_DISK_PATH"])
+upload_dir = Path(os.environ["STORAGE_DISK_PATH"])
 upload_dir.mkdir(parents=True, exist_ok=True)
 
 if TEST_DB_PATH.exists():

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     database_url: str | None = os.getenv("DATABASE_URL")  # 不给默认，缺失就暴露问题
     allowed_origins: list[str] = []
     storage_driver: str = os.getenv("STORAGE_DRIVER", "disk")
-    storage_disk_path: str = os.getenv("storage_DISK_PATH", "/data/uploads")
+    storage_disk_path: str = os.getenv("STORAGE_DISK_PATH", "/data/uploads")
     s3_endpoint: str = os.getenv("S3_ENDPOINT", "")
     s3_region: str = os.getenv("S3_REGION", "")
     s3_bucket: str = os.getenv("S3_BUCKET", "")
