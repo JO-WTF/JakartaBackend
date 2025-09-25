@@ -61,6 +61,9 @@ class DN(Base):
     mos_type = Column(String(64), nullable=True)
     region = Column(String(64), nullable=True)
     plan_mos_date = Column(String(64), nullable=True)
+    last_updated_by = Column(String(128), nullable=True)
+    gs_sheet = Column(String(256), nullable=True)
+    gs_row = Column(Integer, nullable=True)
 
 
 class DNRecord(Base):
@@ -73,6 +76,7 @@ class DNRecord(Base):
     photo_url = Column(Text, nullable=True)
     lng = Column(String(20), nullable=True)
     lat = Column(String(20), nullable=True)
+    updated_by = Column(String(128), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
