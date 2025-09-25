@@ -159,7 +159,7 @@ def get_existing_du_ids(db: Session, du_ids: Iterable[str]) -> Set[str]:
     return {row[0] for row in rows}
 
 
-def ensure_dn(db: Session, dn_number: str, **fields: str | None) -> DN:
+def ensure_dn(db: Session, dn_number: str, **fields: Any) -> DN:
     assignable = filter_assignable_dn_fields(fields)
     non_null_assignable = {k: v for k, v in assignable.items() if v is not None}
 
@@ -175,6 +175,15 @@ def ensure_dn(db: Session, dn_number: str, **fields: str | None) -> DN:
     for key, value in non_null_assignable.items():
         if getattr(dn, key, None) != value:
             setattr(dn, key, value)
+            updated = True
+
+    # Allow explicit updates to nullable fields (e.g. last_updated_by) when
+    # they are provided in the payload even if the value is None.
+    for key, value in assignable.items():
+        if key in non_null_assignable:
+            continue
+        if getattr(dn, key, None) is not None and value is None:
+            setattr(dn, key, None)
             updated = True
 
     if updated:
@@ -207,6 +216,7 @@ def add_dn_record(
     lng: str | None,
     lat: str | None,
     du_id: str | None = None,
+    updated_by: str | None = None,
 ) -> DNRecord:
     rec = DNRecord(
         dn_number=dn_number,
@@ -216,21 +226,28 @@ def add_dn_record(
         photo_url=photo_url,
         lng=lng,
         lat=lat,
+        updated_by=updated_by,
     )
     db.add(rec)
     db.commit()
     db.refresh(rec)
 
     # Keep the DN table in sync with the latest record that was just created.
+    ensure_payload: dict[str, Any] = {
+        "du_id": du_id,
+        "status": status,
+        "remark": remark,
+        "photo_url": photo_url,
+        "lng": lng,
+        "lat": lat,
+    }
+    if updated_by is not None:
+        ensure_payload["last_updated_by"] = updated_by
+
     ensure_dn(
         db,
         dn_number,
-        du_id=du_id,
-        status=status,
-        remark=remark,
-        photo_url=photo_url,
-        lng=lng,
-        lat=lat,
+        **ensure_payload,
     )
     db.refresh(rec)
     return rec
@@ -343,6 +360,8 @@ def update_dn_record(
     photo_url: Optional[str] = None,
     du_id: Optional[str] = None,
     du_id_set: bool = False,
+    updated_by: Optional[str] = None,
+    updated_by_set: bool = False,
 ) -> Optional[DNRecord]:
     obj = db.query(DNRecord).get(rec_id)
     if not obj:
@@ -358,6 +377,10 @@ def update_dn_record(
         obj.du_id = du_id
     elif du_id is not None:
         obj.du_id = du_id
+    if updated_by_set:
+        obj.updated_by = updated_by
+    elif updated_by is not None:
+        obj.updated_by = updated_by
 
     db.add(obj)
     db.commit()

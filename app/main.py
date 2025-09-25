@@ -599,6 +599,7 @@ def update_dn(
     photo: UploadFile | None = File(None),
     lng: str | float | None = Form(None),
     lat: str | float | None = Form(None),
+    updated_by: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     dn_number = normalize_dn(dnNumber)
@@ -621,15 +622,27 @@ def update_dn(
     lng_val = str(lng) if lng else None
     lat_val = str(lat) if lat else None
 
+    updated_by_value = None
+    if updated_by is not None:
+        updated_by_value = updated_by.strip()
+        if updated_by_value == "":
+            updated_by_value = None
+
+    ensure_payload: dict[str, Any] = {
+        "du_id": du_id_normalized,
+        "status": status,
+        "remark": remark,
+        "photo_url": photo_url,
+        "lng": lng_val,
+        "lat": lat_val,
+    }
+    if updated_by_value is not None:
+        ensure_payload["last_updated_by"] = updated_by_value
+
     ensure_dn(
         db,
         dn_number,
-        du_id=du_id_normalized,
-        status=status,
-        remark=remark,
-        photo_url=photo_url,
-        lng=lng_val,
-        lat=lat_val,
+        **ensure_payload,
     )
     if du_id_normalized:
         ensure_du(db, du_id_normalized)
@@ -643,6 +656,7 @@ def update_dn(
         lng=lng_val,
         lat=lat_val,
         du_id=du_id_normalized,
+        updated_by=updated_by_value,
     )
     return {"ok": True, "id": rec.id, "photo": photo_url}
 
@@ -763,6 +777,7 @@ def search_dn_records_api(
                 "photo_url": it.photo_url,
                 "lng": it.lng,
                 "lat": it.lat,
+                "updated_by": it.updated_by,
                 "created_at": it.created_at.isoformat() if it.created_at else None,
             }
             for it in items
@@ -803,6 +818,7 @@ def batch_get_dn_records(
                 "photo_url": it.photo_url,
                 "lng": it.lng,
                 "lat": it.lat,
+                "updated_by": it.updated_by,
                 "created_at": it.created_at.isoformat() if it.created_at else None,
             }
             for it in items
@@ -816,11 +832,13 @@ def edit_dn_record(
     status: Optional[str] = Form(None),
     remark: Optional[str] = Form(None),
     duId: Optional[str] = Form(None),
+    updated_by: Optional[str] = Form(None),
     photo: UploadFile | None = File(None),
     json_body: Optional[dict] = Body(None),
     db: Session = Depends(get_db),
 ):
     du_id_provided = duId is not None
+    updated_by_provided = updated_by is not None
 
     if json_body and isinstance(json_body, dict):
         if "status" in json_body:
@@ -830,6 +848,9 @@ def edit_dn_record(
         if "duId" in json_body:
             duId = json_body.get("duId")
             du_id_provided = True
+        if "updated_by" in json_body:
+            updated_by = json_body.get("updated_by")
+            updated_by_provided = True
 
     if status is not None and status.strip() == "":
         status = None
@@ -852,6 +873,13 @@ def edit_dn_record(
     elif du_id_provided:
         duId = None
 
+    if isinstance(updated_by, str):
+        updated_by = updated_by.strip()
+        if updated_by == "":
+            updated_by = None
+    elif updated_by_provided and updated_by is not None:
+        updated_by = str(updated_by)
+
     if status is not None and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
 
@@ -872,19 +900,27 @@ def edit_dn_record(
         photo_url=photo_url,
         du_id=normalized_du_id,
         du_id_set=du_id_provided,
+        updated_by=updated_by,
+        updated_by_set=updated_by_provided,
     )
     if not rec:
         raise HTTPException(status_code=404, detail="Record not found")
 
+    ensure_payload: dict[str, Any] = {
+        "du_id": rec.du_id,
+        "status": rec.status,
+        "remark": rec.remark,
+        "photo_url": rec.photo_url,
+        "lng": rec.lng,
+        "lat": rec.lat,
+    }
+    if updated_by_provided:
+        ensure_payload["last_updated_by"] = rec.updated_by
+
     ensure_dn(
         db,
         rec.dn_number,
-        du_id=rec.du_id,
-        status=rec.status,
-        remark=rec.remark,
-        photo_url=rec.photo_url,
-        lng=rec.lng,
-        lat=rec.lat,
+        **ensure_payload,
     )
 
     return {"ok": True, "id": rec.id}
@@ -1020,14 +1056,18 @@ def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     )
     data = all_values[3:]  # 从第4行开始
     trimmed: List[List[str]] = []
+    row_numbers: List[int] = []
     column_count = len(columns)
-    for row in data:
+    for index, row in enumerate(data, start=4):
         row_values = row[:column_count]
         if len(row_values) < column_count:
             row_values = row_values + [""] * (column_count - len(row_values))
         trimmed.append(row_values)
+        row_numbers.append(index)
 
     df = pd.DataFrame(trimmed, columns=columns)
+    df["gs_sheet"] = sheet.title
+    df["gs_row"] = row_numbers
     dn_sync_logger.debug(
         "Sheet '%s' produced DataFrame with %d rows", sheet.title, len(df)
     )
@@ -1477,6 +1517,9 @@ async def get_dn_list(db: Session = Depends(get_db)):
             "photo_url": it.photo_url,
             "lng": it.lng,
             "lat": it.lat,
+            "last_updated_by": it.last_updated_by,
+            "gs_sheet": it.gs_sheet,
+            "gs_row": it.gs_row,
         }
         for column in sheet_columns:
             if column == "dn_number":
@@ -1601,6 +1644,9 @@ def search_dn_list_api(
             "photo_url": it.photo_url,
             "lng": it.lng,
             "lat": it.lat,
+            "last_updated_by": it.last_updated_by,
+            "gs_sheet": it.gs_sheet,
+            "gs_row": it.gs_row,
         }
         for column in sheet_columns:
             if column == "dn_number":
@@ -1637,6 +1683,7 @@ def get_all_dn_records(db: Session = Depends(get_db)):
                 "photo_url": it.photo_url,
                 "lng": it.lng,
                 "lat": it.lat,
+                "updated_by": it.updated_by,
                 "created_at": it.created_at.isoformat() if it.created_at else None,
             }
             for it in items
@@ -1686,6 +1733,9 @@ def batch_search_dn_list(
             "photo_url": it.photo_url,
             "lng": it.lng,
             "lat": it.lat,
+            "last_updated_by": it.last_updated_by,
+            "gs_sheet": it.gs_sheet,
+            "gs_row": it.gs_row,
         }
         for column in sheet_columns:
             if column == "dn_number":
@@ -1738,6 +1788,7 @@ def get_dn_records(dn_number: str, db: Session = Depends(get_db)):
                 "photo_url": it.photo_url,
                 "lng": it.lng,
                 "lat": it.lat,
+                "updated_by": it.updated_by,
                 "created_at": it.created_at.isoformat() if it.created_at else None,
             }
             for it in items
