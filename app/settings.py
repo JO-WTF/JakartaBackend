@@ -6,7 +6,7 @@ import os
 class Settings(BaseSettings):
     app_env: str = os.getenv("APP_ENV", "development")
     database_url: str | None = os.getenv("DATABASE_URL")  # 不给默认，缺失就暴露问题
-    allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
+    allowed_origins: str | list[str] = Field(default="*")
     storage_driver: str = os.getenv("STORAGE_DRIVER", "disk")
     storage_disk_path: str = os.getenv("STORAGE_DISK_PATH", "/data/uploads")
     s3_endpoint: str = os.getenv("S3_ENDPOINT", "")
@@ -24,10 +24,12 @@ class Settings(BaseSettings):
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_allowed_origins(cls, value: str | list[str] | None) -> list[str]:
-        if value is None:
+        if not value:
             return ["*"]
 
         if isinstance(value, str):
+            if value.strip() == "*":
+                return ["*"]
             items = [item.strip() for item in value.split(",") if item.strip()]
             return items or ["*"]
 
