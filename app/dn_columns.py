@@ -186,10 +186,17 @@ def extend_dn_columns(db: Session, column_names: Iterable[str]) -> List[str]:
     return added
 
 
+def extend_dn_table_columns(db: Session, column_names: Iterable[str]) -> List[str]:
+    """向后兼容的别名，委托给 :func:`extend_dn_columns`。"""
+
+    return extend_dn_columns(db, column_names)
+
+
 __all__ = [
     "SHEET_BASE_COLUMNS",
     "ensure_dynamic_columns_loaded",
     "extend_dn_columns",
+    "extend_dn_table_columns",
     "filter_assignable_dn_fields",
     "get_sheet_columns",
     "get_dynamic_columns",
