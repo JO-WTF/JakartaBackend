@@ -1,11 +1,12 @@
 # 应用配置定义
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 import os
 
 class Settings(BaseSettings):
     app_env: str = os.getenv("APP_ENV", "development")
     database_url: str | None = os.getenv("DATABASE_URL")  # 不给默认，缺失就暴露问题
-    allowed_origins: list[str] = []
+    allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
     storage_driver: str = os.getenv("STORAGE_DRIVER", "disk")
     storage_disk_path: str = os.getenv("STORAGE_DISK_PATH", "/data/uploads")
     s3_endpoint: str = os.getenv("S3_ENDPOINT", "")
@@ -20,10 +21,24 @@ class Settings(BaseSettings):
         os.getenv("DN_SHEET_SYNC_INTERVAL_SECONDS", "300")
     )
 
-settings = Settings()
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, value: str | list[str] | None) -> list[str]:
+        if value is None:
+            return ["*"]
 
-raw = os.getenv("ALLOWED_ORIGINS", "")
-settings.allowed_origins = [x.strip() for x in raw.split(",") if x.strip()] or ["*"]
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+            return items or ["*"]
+
+        if isinstance(value, list):
+            items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+            return items or ["*"]
+
+        raise TypeError("allowed_origins must be provided as a string or list of strings")
+
+
+settings = Settings()
 
 # 校正 DATABASE_URL（必须存在）
 if not settings.database_url:
