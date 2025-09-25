@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
-
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
