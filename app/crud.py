@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence
+from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, case, func, or_
 from .models import DU, DURecord, DN, DNRecord, DNSyncLog
@@ -606,11 +607,41 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
             .distinct()
             .order_by(trimmed.asc())
         )
-        distinct_values[key] = [row.value for row in query.all() if row.value]
+        values = [row.value for row in query.all() if row.value]
+
+        if key == "plan_mos_date":
+            values = _sort_plan_mos_dates_desc(values)
+
+        distinct_values[key] = values
 
     total = db.query(func.count(DN.id)).scalar() or 0
 
     return distinct_values, int(total)
+
+
+def _sort_plan_mos_dates_desc(values: List[str]) -> List[str]:
+    """Sort plan_mos_date values descending by parsed date when possible."""
+
+    def _parse(value: str) -> datetime | None:
+        formats = [
+            "%d %b %y",
+            "%Y-%m-%d",
+            "%d-%m-%Y",
+            "%Y/%m/%d",
+            "%d/%m/%Y",
+        ]
+        for fmt in formats:
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        return None
+
+    return sorted(
+        values,
+        key=lambda v: (_parse(v) or datetime.min, v),
+        reverse=True,
+    )
 
 
 def get_dn_status_delivery_counts(
