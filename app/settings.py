@@ -2,10 +2,12 @@
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 import os
+from urllib.parse import urlparse
 
 class Settings(BaseSettings):
     app_env: str = os.getenv("APP_ENV", "development")
     database_url: str | None = os.getenv("DATABASE_URL")  # 不给默认，缺失就暴露问题
+    database_name: str | None = os.getenv("DATABASE_NAME")
     allowed_origins: str | list[str] = Field(default="*")
     storage_driver: str = os.getenv("STORAGE_DRIVER", "disk")
     storage_disk_path: str = os.getenv("STORAGE_DISK_PATH", "/data/uploads")
@@ -39,6 +41,18 @@ class Settings(BaseSettings):
 
         raise TypeError("allowed_origins must be provided as a string or list of strings")
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            # 去除复制环境变量时常见的换行或多余空白
+            value = value.strip()
+            if value:
+                value = value.replace("\n", "").replace("\r", "")
+        return value
+
 
 settings = Settings()
 
@@ -52,3 +66,11 @@ if url.startswith("postgres://"):
 if "sslmode=" not in url:
     url += ("&" if "?" in url else "?") + "sslmode=require"
 settings.database_url = url
+
+if not settings.database_name:
+    parsed = urlparse(url)
+    db_path = parsed.path.lstrip("/")
+    if parsed.scheme.startswith("sqlite"):
+        settings.database_name = db_path or parsed.path
+    else:
+        settings.database_name = db_path or None

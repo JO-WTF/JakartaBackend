@@ -4,17 +4,6 @@ services:
     env: docker
     plan: free
     autoDeploy: true
-    envVars:
-      - key: DATABASE_URL
-        value: "postgresql://du_postgres_user:9bewadmhevgeK3OI8dnAzRymwg6e1e9r@dpg-d30n9kvdiees7384ping-a/du_postgres?sslmode=require"
-      - key: APP_ENV
-        value: production
-      - key: ALLOWED_ORIGINS
-        value: "*"              # 调试可用；正式建议改成你的前端域名
-      - key: STORAGE_DRIVER
-        value: disk
-      - key: STORAGE_DISK_PATH
-        value: /data/uploads
     disk:
       name: uploads
       mountPath: /data

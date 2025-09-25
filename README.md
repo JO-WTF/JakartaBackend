@@ -56,6 +56,7 @@ The application relies on environment variables that are loaded via `app.setting
 | Variable | Description |
 | --- | --- |
 | `DATABASE_URL` | SQLAlchemy connection string (required). |
+| `DATABASE_NAME` | Database name (optional and defaults to the name parsed from `DATABASE_URL`). |
 | `GOOGLE_API_KEY` | API key used to access Google Sheets (required for DN sync). |
 | `GOOGLE_SHEET_URL` | URL of the DN tracking Google Sheet (required for DN sync). |
 | `DN_SHEET_SYNC_INTERVAL_SECONDS` | Interval, in seconds, for the background sheet sync scheduler (defaults to `300`). |
