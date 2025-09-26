@@ -496,6 +496,8 @@ def search_dn_list(
     status_wh_values: Sequence[str] | None = None,
     subcon_values: Sequence[str] | None = None,
     project_request: str | None = None,
+    last_modified_from: datetime | None = None,
+    last_modified_to: datetime | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> Tuple[int, List[DN]]:
@@ -593,6 +595,29 @@ def search_dn_list(
         conds.append(func.trim(DN.subcon).in_(trimmed_subcon_values))
     if project_request:
         conds.append(DN.project_request == project_request)
+
+    if last_modified_from is not None or last_modified_to is not None:
+        latest_record_subq = (
+            db.query(
+                DNRecord.dn_number.label("dn_number"),
+                func.max(DNRecord.created_at).label("latest_record_created_at"),
+            )
+            .group_by(DNRecord.dn_number)
+            .subquery()
+        )
+        base_q = base_q.outerjoin(
+            latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
+        )
+        last_modified_expr = func.greatest(
+            DN.created_at,
+            func.coalesce(
+                latest_record_subq.c.latest_record_created_at, DN.created_at
+            ),
+        )
+        if last_modified_from is not None:
+            conds.append(last_modified_expr >= last_modified_from)
+        if last_modified_to is not None:
+            conds.append(last_modified_expr <= last_modified_to)
 
     if conds:
         base_q = base_q.filter(and_(*conds))
