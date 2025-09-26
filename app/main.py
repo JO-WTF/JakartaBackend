@@ -728,6 +728,10 @@ def update_dn(
     dnNumber: str = Form(...),
     status: str = Form(...),
     delivery_status: str | None = Form(None),
+    status_delivery: str | None = Form(
+        None,
+        description="Backward compatibility alias for delivery_status form field",
+    ),
     remark: str | None = Form(None),
     duId: str | None = Form(None),
     photo: UploadFile | None = File(None),
@@ -762,9 +766,13 @@ def update_dn(
         if updated_by_value == "":
             updated_by_value = None
 
+    delivery_status_raw = delivery_status
+    if delivery_status_raw is None and status_delivery is not None:
+        delivery_status_raw = status_delivery
+
     delivery_status_value = None
-    if delivery_status is not None:
-        delivery_status_value = delivery_status.strip()
+    if delivery_status_raw is not None:
+        delivery_status_value = delivery_status_raw.strip()
         if delivery_status_value == "":
             delivery_status_value = None
 
