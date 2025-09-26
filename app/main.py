@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Any
 from datetime import datetime, timedelta, timezone, time
+from time import perf_counter
 import asyncio
 import re, os, unicodedata
 from functools import lru_cache
@@ -1086,9 +1087,18 @@ DATE_FORMATS = [
 
 def fetch_plan_sheets(sheet_url):
     """获取以 'Plan MOS' 开头的所有工作表"""
+    start = perf_counter()
     sheets = sheet_url.worksheets()
+    dn_sync_logger.debug(
+        "Fetched %d worksheets in %.3fs",
+        len(sheets),
+        perf_counter() - start,
+    )
     dn_sync_logger.debug("Spreadsheet has %d worksheets", len(sheets))
     plan_sheets = [sheet for sheet in sheets if sheet.title.startswith("Plan MOS")]
+    dn_sync_logger.debug(
+        "Filtered plan sheets in %.3fs", perf_counter() - start
+    )
     if plan_sheets:
         sheet_titles = [sheet.title for sheet in plan_sheets]
         preview_titles = ", ".join(sheet_titles[:3])
@@ -1193,7 +1203,14 @@ def normalize_database_fields(db: Session) -> None:
 
 def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     """处理工作表数据"""
+    fetch_start = perf_counter()
     all_values = sheet.get_all_values()
+    dn_sync_logger.debug(
+        "sheet.get_all_values for '%s' returned %d rows in %.3fs",
+        sheet.title,
+        len(all_values),
+        perf_counter() - fetch_start,
+    )
     dn_sync_logger.debug(
         "Processing sheet '%s' with %d total rows", sheet.title, len(all_values)
     )
@@ -1214,13 +1231,30 @@ def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     dn_sync_logger.debug(
         "Sheet '%s' produced DataFrame with %d rows", sheet.title, len(df)
     )
+    dn_sync_logger.debug(
+        "Processed sheet '%s' into DataFrame in %.3fs",
+        sheet.title,
+        perf_counter() - fetch_start,
+    )
     return df
 
 def process_all_sheets(sh) -> pd.DataFrame:
     """处理所有符合条件的工作表并合并数据"""
+    total_start = perf_counter()
     plan_sheets = fetch_plan_sheets(sh)
+    columns_start = perf_counter()
     columns = get_sheet_columns()
+    dn_sync_logger.debug(
+        "Loaded sheet column definitions in %.3fs",
+        perf_counter() - columns_start,
+    )
+    processing_start = perf_counter()
     all_data = [process_sheet_data(sheet, columns) for sheet in plan_sheets]
+    dn_sync_logger.debug(
+        "Processed %d plan sheets in %.3fs",
+        len(plan_sheets),
+        perf_counter() - processing_start,
+    )
     if not all_data:
         dn_sync_logger.info("No plan sheets found to process; returning empty DataFrame")
         return pd.DataFrame(columns=columns)
@@ -1232,6 +1266,10 @@ def process_all_sheets(sh) -> pd.DataFrame:
         "Combined DataFrame has %d rows and %d columns",
         len(combined),
         len(combined.columns),
+    )
+    dn_sync_logger.debug(
+        "Completed sheet processing workflow in %.3fs",
+        perf_counter() - total_start,
     )
     return combined
 
@@ -1255,11 +1293,24 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
 
     try:
         dn_sync_logger.debug("Creating gspread client")
+        client_start = perf_counter()
         gc = create_gspread_client()
+        dn_sync_logger.debug(
+            "Created gspread client in %.3fs", perf_counter() - client_start
+        )
         dn_sync_logger.debug("Opening spreadsheet URL: %s", SPREADSHEET_URL)
+        open_start = perf_counter()
         sh = gc.open_by_url(SPREADSHEET_URL)
-        dn_sync_logger.debug("Spreadsheet opened successfully")
+        dn_sync_logger.debug(
+            "Spreadsheet opened successfully in %.3fs",
+            perf_counter() - open_start,
+        )
+        sheet_start = perf_counter()
         combined_df = process_all_sheets(sh)
+        dn_sync_logger.debug(
+            "Fetched and combined sheet data in %.3fs",
+            perf_counter() - sheet_start,
+        )
     except Exception as exc:
         logger.exception("Failed to fetch DN sheet data: %s", exc)
         dn_sync_logger.exception("Failed to fetch DN sheet data")
@@ -1275,6 +1326,16 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
     dn_sync_logger.info("Preparing to process %d sheet rows", total_rows)
     dn_sync_logger.debug("DataFrame contains %d total rows", total_rows)
 
+    processing_start = perf_counter()
+
+    row_normalization_total = 0.0
+    plan_mos_parse_total = 0.0
+    plan_mos_parse_count = 0
+    dn_normalization_total = 0.0
+    record_build_total = 0.0
+    rows_iterated = 0
+    rows_persisted = 0
+
     if not combined_df.empty:
         columns_tuple = tuple(sheet_columns)
         try:
@@ -1289,6 +1350,8 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
 
         if dn_index is not None:
             for row_values in combined_df.itertuples(index=False, name=None):
+                rows_iterated += 1
+                row_normalization_start = perf_counter()
                 normalized_row: list[Any] = []
                 has_payload = False
 
@@ -1300,7 +1363,11 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
                         and isinstance(normalized_value, str)
                         and normalized_value
                     ):
+                        parse_start = perf_counter()
                         parsed_plan_mos_date = parse_date(normalized_value)
+                        parse_duration = perf_counter() - parse_start
+                        plan_mos_parse_total += parse_duration
+                        plan_mos_parse_count += 1
                         if isinstance(parsed_plan_mos_date, datetime):
                             normalized_value = parsed_plan_mos_date.strftime("%d %b %y")
 
@@ -1309,9 +1376,13 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
 
                     normalized_row.append(normalized_value)
 
+                row_normalization_total += perf_counter() - row_normalization_start
+
+                dn_normalization_start = perf_counter()
                 raw_number = normalized_row[dn_index]
                 raw_number_str = str(raw_number).strip() if raw_number is not None else ""
                 normalized_number = normalize_dn(raw_number_str) if raw_number_str else ""
+                dn_normalization_total += perf_counter() - dn_normalization_start
                 if not normalized_number:
                     skipped_missing_number += 1
                     continue
@@ -1320,9 +1391,12 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
                     skipped_empty_payload += 1
                     continue
 
+                record_build_start = perf_counter()
                 normalized_row[dn_index] = normalized_number
                 cleaned = dict(zip(columns_tuple, normalized_row))
                 records.append(cleaned)
+                record_build_total += perf_counter() - record_build_start
+                rows_persisted += 1
                 dn_numbers.add(normalized_number)
     else:
         dn_sync_logger.info("Combined DataFrame is empty; no rows to process")
@@ -1348,6 +1422,12 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
     numbers_to_update: set[str] = set()
     numbers_unchanged: set[str] = set()
 
+    assignable_filter_total = 0.0
+    non_null_filter_total = 0.0
+    change_detection_total = 0.0
+    payload_mutation_total = 0.0
+    latest_merge_total = 0.0
+
     for entry in records:
         number = entry["dn_number"]
         sheet_fields = {
@@ -1356,6 +1436,7 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         latest = latest_records_for_update.get(number)
         existing_dn = existing_dn_map.get(number)
         if latest:
+            merge_start = perf_counter()
             if not sheet_fields.get("du_id") and latest.du_id:
                 sheet_fields["du_id"] = latest.du_id
             sheet_fields.update(
@@ -1367,26 +1448,34 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
                     "lat": latest.lat,
                 }
             )
+            latest_merge_total += perf_counter() - merge_start
         elif not existing_dn and number not in numbers_to_create:
             dn_sync_logger.debug("Preparing creation for DN %s from sheet data", number)
 
+        assignable_start = perf_counter()
         assignable_fields = {
             key: value
             for key, value in filter_assignable_dn_fields(sheet_fields).items()
             if key in mutable_columns
         }
+        assignable_filter_total += perf_counter() - assignable_start
+
+        non_null_start = perf_counter()
         non_null_fields = {
             key: value for key, value in assignable_fields.items() if value is not None
         }
+        non_null_filter_total += perf_counter() - non_null_start
         if not non_null_fields:
             continue
 
+        comparison_start = perf_counter()
         if existing_dn:
             changed_fields = {
                 key: value
                 for key, value in non_null_fields.items()
                 if getattr(existing_dn, key, None) != value
             }
+            change_detection_total += perf_counter() - comparison_start
             if not changed_fields:
                 numbers_unchanged.add(number)
                 continue
@@ -1398,25 +1487,70 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
             numbers_to_update.add(number)
             bulk_update_columns.update(changed_fields.keys())
             payload = payload_by_number.setdefault(number, {"dn_number": number})
+            mutation_start = perf_counter()
             payload.update(changed_fields)
+            payload_mutation_total += perf_counter() - mutation_start
         else:
+            change_detection_total += perf_counter() - comparison_start
             numbers_to_create.add(number)
             bulk_update_columns.update(non_null_fields.keys())
             payload = payload_by_number.setdefault(number, {"dn_number": number})
+            mutation_start = perf_counter()
             payload.update(non_null_fields)
+            payload_mutation_total += perf_counter() - mutation_start
 
+    if rows_iterated:
+        dn_sync_logger.info(
+            (
+                "Row processing timing: total_normalization=%.3fs (avg %.6fs over %d rows), "
+                "plan_mos_parse=%.3fs (%d calls), dn_normalization=%.3fs (avg %.6fs), "
+                "record_build=%.3fs (avg %.6fs over %d persisted)"
+            ),
+            row_normalization_total,
+            row_normalization_total / rows_iterated,
+            rows_iterated,
+            plan_mos_parse_total,
+            plan_mos_parse_count,
+            dn_normalization_total,
+            dn_normalization_total / rows_iterated,
+            record_build_total,
+            (record_build_total / rows_persisted) if rows_persisted else 0.0,
+            rows_persisted,
+        )
+
+    if records:
+        dn_sync_logger.info(
+            (
+                "Payload preparation timing: latest_merge=%.3fs, "
+                "assignable_filter=%.3fs (avg %.6fs), non_null_filter=%.3fs (avg %.6fs), "
+                "change_detection=%.3fs (avg %.6fs), payload_mutation=%.3fs (avg %.6fs)"
+            ),
+            latest_merge_total,
+            assignable_filter_total,
+            assignable_filter_total / len(records),
+            non_null_filter_total,
+            non_null_filter_total / len(records),
+            change_detection_total,
+            change_detection_total / len(records),
+            payload_mutation_total,
+            payload_mutation_total / len(records),
+        )
+
+    processing_duration = perf_counter() - processing_start
     dn_sync_logger.debug(
-        "Prepared %d DN payloads for bulk upsert (create=%d, update=%d)",
+        "Prepared %d DN payloads for bulk upsert (create=%d, update=%d) in %.3fs",
         len(payload_by_number),
         len(numbers_to_create),
         len(numbers_to_update),
+        processing_duration,
     )
     dn_sync_logger.info(
-        "DN payload summary: create=%d, update=%d, unchanged=%d, bulk_columns=%d",
+        "DN payload summary: create=%d, update=%d, unchanged=%d, bulk_columns=%d (processing_time=%.3fs)",
         len(numbers_to_create),
         len(numbers_to_update),
         len(numbers_unchanged),
         len(bulk_update_columns),
+        processing_duration,
     )
 
     if payload_by_number:
@@ -1437,9 +1571,14 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
                 index_elements=[DN.dn_number]
             )
 
+        db_start = perf_counter()
         db.execute(upsert_stmt, list(payload_by_number.values()))
         db.commit()
-        dn_sync_logger.debug("Bulk upsert committed for %d DN entries", len(payload_by_number))
+        dn_sync_logger.debug(
+            "Bulk upsert committed for %d DN entries in %.3fs",
+            len(payload_by_number),
+            perf_counter() - db_start,
+        )
         dn_sync_logger.info(
             "Upserted %d DN records (create=%d, update=%d)",
             len(payload_by_number),
@@ -1447,7 +1586,12 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
             len(numbers_to_update),
         )
 
+    normalization_start = perf_counter()
     normalize_database_fields(db)
+    dn_sync_logger.debug(
+        "normalize_database_fields completed in %.3fs",
+        perf_counter() - normalization_start,
+    )
 
     dn_sync_logger.info(
         "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, unique_dns=%d, "
