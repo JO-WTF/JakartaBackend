@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, time
 import asyncio
 import re, os, unicodedata
 from pathlib import Path
@@ -112,6 +112,43 @@ if settings.storage_driver != "s3":
 
 Base.metadata.create_all(bind=engine)
 refresh_dynamic_columns(engine)
+
+TZ_GMT7 = timezone(timedelta(hours=7))
+
+
+def to_gmt7_iso(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    return dt.astimezone(TZ_GMT7).isoformat()
+
+
+def parse_gmt7_date_range(
+    date_from: datetime | None, date_to: datetime | None
+) -> tuple[datetime | None, datetime | None]:
+    """Normalize incoming datetimes to GMT+7 day boundaries."""
+
+    def _normalize(value: datetime | None, is_start: bool) -> datetime | None:
+        if value is None:
+            return None
+
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+
+        local_value = value.astimezone(TZ_GMT7)
+        boundary_time = time(0, 0, 0) if is_start else time(23, 59, 59)
+        localized = datetime.combine(
+            local_value.date(), boundary_time, tzinfo=TZ_GMT7
+        )
+        return localized.astimezone(timezone.utc)
+
+    start = _normalize(date_from, True)
+    end = _normalize(date_to, False)
+
+    return start, end
 
 # ====== 校验与清洗 ======
 DU_RE = re.compile(r"^.+$")
@@ -445,7 +482,7 @@ def search_du_recordss(
                 "photo_url": it.photo_url,
                 "lng": it.lng if it.lng else None,
                 "lat": it.lat if it.lat else None,
-                "created_at": it.created_at.isoformat() if it.created_at else None,
+                "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
         ],
@@ -491,7 +528,7 @@ def batch_get_du_records(
                 "photo_url": it.photo_url,
                 "lng": it.lng,
                 "lat": it.lat,
-                "created_at": it.created_at.isoformat() if it.created_at else None,
+                "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
         ],
@@ -566,7 +603,7 @@ def get_du_records(du_id: str, db: Session = Depends(get_db)):
             "photo_url": it.photo_url,
             "lng": it.lng,
             "lat": it.lat,
-            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "created_at": to_gmt7_iso(it.created_at),
         } for it in items
     ]}
 
@@ -778,7 +815,7 @@ def search_dn_records_api(
                 "lng": it.lng,
                 "lat": it.lat,
                 "updated_by": it.updated_by,
-                "created_at": it.created_at.isoformat() if it.created_at else None,
+                "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
         ],
@@ -819,7 +856,7 @@ def batch_get_dn_records(
                 "lng": it.lng,
                 "lat": it.lat,
                 "updated_by": it.updated_by,
-                "created_at": it.created_at.isoformat() if it.created_at else None,
+                "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
         ],
@@ -1355,7 +1392,7 @@ def get_latest_dn_sync_log_entry(db: Session = Depends(get_db)):
             "message": log_entry.message,
             "error_message": log_entry.error_message,
             "error_traceback": log_entry.error_traceback,
-            "created_at": log_entry.created_at.isoformat() if log_entry.created_at else None,
+            "created_at": to_gmt7_iso(log_entry.created_at),
         },
     }
 
@@ -1511,7 +1548,7 @@ async def get_dn_list(db: Session = Depends(get_db)):
         row: dict[str, Any] = {
             "id": it.id,
             "dn_number": it.dn_number,
-            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "created_at": to_gmt7_iso(it.created_at),
             "status": it.status,
             "remark": it.remark,
             "photo_url": it.photo_url,
@@ -1526,8 +1563,8 @@ async def get_dn_list(db: Session = Depends(get_db)):
                 continue
             row[column] = getattr(it, column)
         latest = latest_records.get(it.dn_number)
-        row["latest_record_created_at"] = (
-            latest.created_at.isoformat() if latest and latest.created_at else None
+        row["latest_record_created_at"] = to_gmt7_iso(
+            latest.created_at if latest else None
         )
         data.append(row)
 
@@ -1577,6 +1614,12 @@ def search_dn_list_api(
     status_wh: Optional[List[str]] = Query(None, description="Status WH"),
     subcon: Optional[List[str]] = Query(None, description="Subcon"),
     project: str | None = Query(None, description="Project request"),
+    date_from: datetime | None = Query(
+        None, description="Last modified start time (ISO 8601)"
+    ),
+    date_to: datetime | None = Query(
+        None, description="Last modified end time (ISO 8601)"
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -1601,6 +1644,7 @@ def search_dn_list_api(
     subcon_values = _collect_query_values(subcon)
     area_value = area.strip() if area else None
     project_value = project.strip() if project else None
+    modified_from, modified_to = parse_gmt7_date_range(date_from, date_to)
 
     total, items = search_dn_list(
         db,
@@ -1617,6 +1661,8 @@ def search_dn_list_api(
         status_wh_values=status_wh_values,
         subcon_values=subcon_values,
         project_request=project_value,
+        last_modified_from=modified_from,
+        last_modified_to=modified_to,
         page=page,
         page_size=page_size,
     )
@@ -1638,7 +1684,7 @@ def search_dn_list_api(
         row: dict[str, Any] = {
             "id": it.id,
             "dn_number": it.dn_number,
-            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "created_at": to_gmt7_iso(it.created_at),
             "status": it.status,
             "remark": it.remark,
             "photo_url": it.photo_url,
@@ -1653,8 +1699,8 @@ def search_dn_list_api(
                 continue
             row[column] = getattr(it, column)
         latest = latest_records.get(it.dn_number)
-        row["latest_record_created_at"] = (
-            latest.created_at.isoformat() if latest and latest.created_at else None
+        row["latest_record_created_at"] = to_gmt7_iso(
+            latest.created_at if latest else None
         )
         data.append(row)
 
@@ -1684,7 +1730,7 @@ def get_all_dn_records(db: Session = Depends(get_db)):
                 "lng": it.lng,
                 "lat": it.lat,
                 "updated_by": it.updated_by,
-                "created_at": it.created_at.isoformat() if it.created_at else None,
+                "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
         ],
@@ -1727,7 +1773,7 @@ def batch_search_dn_list(
         row: dict[str, Any] = {
             "id": it.id,
             "dn_number": it.dn_number,
-            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "created_at": to_gmt7_iso(it.created_at),
             "status": it.status,
             "remark": it.remark,
             "photo_url": it.photo_url,
@@ -1742,8 +1788,8 @@ def batch_search_dn_list(
                 continue
             row[column] = getattr(it, column)
         latest = latest_records.get(it.dn_number)
-        row["latest_record_created_at"] = (
-            latest.created_at.isoformat() if latest and latest.created_at else None
+        row["latest_record_created_at"] = to_gmt7_iso(
+            latest.created_at if latest else None
         )
         data.append(row)
 
@@ -1789,7 +1835,7 @@ def get_dn_records(dn_number: str, db: Session = Depends(get_db)):
                 "lng": it.lng,
                 "lat": it.lat,
                 "updated_by": it.updated_by,
-                "created_at": it.created_at.isoformat() if it.created_at else None,
+                "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
         ],
