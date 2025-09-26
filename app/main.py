@@ -60,12 +60,11 @@ import gspread
 import pandas as pd
 from .models import DN, Vehicle
 from sqlalchemy.dialects.postgresql import insert
+from .logging_utils import logger
 
 # ====== 启动与静态 ======
 os.makedirs(settings.storage_disk_path, exist_ok=True)
 app = FastAPI(title="DU Backend API", version="1.1.0")
-
-logger = logging.getLogger("uvicorn.error")
 
 GS_KEY_PATH = Path("/etc/secrets/gskey.json")
 try:
@@ -76,30 +75,44 @@ except FileNotFoundError:
 except Exception as exc:
     logger.debug("Failed to read gskey.json from %s: %s", GS_KEY_PATH, exc)
 
+
+def create_gspread_client() -> gspread.Client:
+    """Create a gspread client using service account when available."""
+
+    try:
+        logger.debug(
+            "Attempting to create gspread client using service account file at %s",
+            GS_KEY_PATH,
+        )
+        gc = gspread.service_account(filename=str(GS_KEY_PATH))
+        logger.info("Using gspread service account authentication")
+        return gc
+    except Exception as exc:
+        logger.warning(
+            "Failed to authenticate using service account at %s: %s. Falling back to API key.",
+            GS_KEY_PATH,
+            exc,
+        )
+        gc = gspread.api_key(API_KEY)
+        logger.info("Using gspread API key authentication")
+        return gc
+
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-dn_sync_logger = logging.getLogger("dn_sync")
 if not any(
     isinstance(handler, logging.FileHandler)
     and getattr(handler, "baseFilename", None) == str(DN_SYNC_LOG_PATH)
-    for handler in dn_sync_logger.handlers
+    for handler in logger.handlers
 ):
     file_handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     )
     file_handler.setLevel(logging.DEBUG)
-    dn_sync_logger.addHandler(file_handler)
-if not any(isinstance(handler, logging.StreamHandler) for handler in dn_sync_logger.handlers):
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    )
-    stream_handler.setLevel(logging.DEBUG)
-    dn_sync_logger.addHandler(stream_handler)
-dn_sync_logger.setLevel(logging.DEBUG)
-dn_sync_logger.propagate = False
+    logger.addHandler(file_handler)
+
+dn_sync_logger = logger
 
 SHEET_SYNC_INTERVAL_SECONDS = 300
 _scheduler: AsyncIOScheduler | None = None
@@ -1207,25 +1220,23 @@ def normalize_sheet_value(value: Any) -> Any:
     return value
 
 
-def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None) -> List[str]:
+def sync_dn_sheet_to_db(db: Session) -> List[str]:
     """同步 Google Sheet 中的 DN 数据到数据库。
 
     返回成功同步的 DN number 列表（按字典序升序）。
     """
-    log = logger_obj or logger
     start_time = datetime.utcnow()
     dn_sync_logger.info("Starting sync_dn_sheet_to_db run")
 
     try:
-        dn_sync_logger.debug("Creating gspread client with API key")
-        gc = gspread.api_key(API_KEY)
+        dn_sync_logger.debug("Creating gspread client")
+        gc = create_gspread_client()
         dn_sync_logger.debug("Opening spreadsheet URL: %s", SPREADSHEET_URL)
         sh = gc.open_by_url(SPREADSHEET_URL)
         dn_sync_logger.debug("Spreadsheet opened successfully")
         combined_df = process_all_sheets(sh)
     except Exception as exc:
-        if log:
-            log.exception("Failed to fetch DN sheet data: %s", exc)
+        logger.exception("Failed to fetch DN sheet data: %s", exc)
         dn_sync_logger.exception("Failed to fetch DN sheet data")
         raise
 
@@ -1378,7 +1389,7 @@ def _sync_dn_sheet_with_new_session() -> List[str]:
     db = SessionLocal()
     try:
         try:
-            synced_numbers = sync_dn_sheet_to_db(db, logger_obj=logger)
+            synced_numbers = sync_dn_sheet_to_db(db)
         except Exception as exc:
             dn_sync_logger.exception(
                 "sync_dn_sheet_to_db raised an error during manual trigger: %s", exc
@@ -1630,7 +1641,7 @@ async def _shutdown_scheduler() -> None:
 @app.get("/api/dn/stats/{date}")
 async def get_dn_stats(date: str):
     # 初始化Google Sheets客户端
-    gc = gspread.api_key(API_KEY)
+    gc = create_gspread_client()
     sh = gc.open_by_url(SPREADSHEET_URL)
 
     # 获取所有工作表数据
