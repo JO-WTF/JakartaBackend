@@ -1416,8 +1416,8 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         "Fetched %d existing DN records for potential update", len(latest_records_for_update)
     )
 
-    payload_by_number: dict[str, dict[str, Any]] = {}
-    bulk_update_columns: set[str] = set()
+    create_payload_by_number: dict[str, dict[str, Any]] = {}
+    update_payload_by_number: dict[str, dict[str, Any]] = {}
     numbers_to_create: set[str] = set()
     numbers_to_update: set[str] = set()
     numbers_unchanged: set[str] = set()
@@ -1427,6 +1427,10 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
     change_detection_total = 0.0
     payload_mutation_total = 0.0
     latest_merge_total = 0.0
+    created_columns: set[str] = set()
+    updated_columns: set[str] = set()
+    created_field_total = 0
+    updated_field_total = 0
 
     for entry in records:
         number = entry["dn_number"]
@@ -1483,19 +1487,25 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
                     "Preparing update for existing DN %s after detecting differences", number
                 )
             numbers_to_update.add(number)
-            bulk_update_columns.update(changed_fields.keys())
-            payload = payload_by_number.setdefault(number, {"dn_number": number})
+            updated_columns.update(changed_fields.keys())
+            payload = update_payload_by_number.setdefault(
+                number, {"id": existing_dn.id, "dn_number": number}
+            )
             mutation_start = perf_counter()
             payload.update(changed_fields)
             payload_mutation_total += perf_counter() - mutation_start
+            updated_field_total += len(changed_fields)
         else:
             change_detection_total += perf_counter() - comparison_start
             numbers_to_create.add(number)
-            bulk_update_columns.update(non_null_fields.keys())
-            payload = payload_by_number.setdefault(number, {"dn_number": number})
+            created_columns.update(non_null_fields.keys())
+            payload = create_payload_by_number.setdefault(
+                number, {"dn_number": number}
+            )
             mutation_start = perf_counter()
             payload.update(non_null_fields)
             payload_mutation_total += perf_counter() - mutation_start
+            created_field_total += len(non_null_fields)
 
     if rows_iterated:
         dn_sync_logger.info(
@@ -1535,53 +1545,57 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         )
 
     processing_duration = perf_counter() - processing_start
+    total_payloads = len(create_payload_by_number) + len(update_payload_by_number)
     dn_sync_logger.debug(
-        "Prepared %d DN payloads for bulk upsert (create=%d, update=%d) in %.3fs",
-        len(payload_by_number),
+        "Prepared %d DN payloads (create=%d, update=%d) in %.3fs",
+        total_payloads,
         len(numbers_to_create),
         len(numbers_to_update),
         processing_duration,
     )
     dn_sync_logger.info(
-        "DN payload summary: create=%d, update=%d, unchanged=%d, bulk_columns=%d (processing_time=%.3fs)",
+        (
+            "DN payload summary: create=%d (fields=%d, columns=%d), "
+            "update=%d (fields=%d, columns=%d), unchanged=%d (processing_time=%.3fs)"
+        ),
         len(numbers_to_create),
+        created_field_total,
+        len(created_columns),
         len(numbers_to_update),
+        updated_field_total,
+        len(updated_columns),
         len(numbers_unchanged),
-        len(bulk_update_columns),
         processing_duration,
     )
 
-    if payload_by_number:
-        insert_stmt = insert(DN)
-        if bulk_update_columns:
-            update_mappings = {
-                column: func.coalesce(
-                    insert_stmt.excluded[column], getattr(DN.__table__.c, column)
-                )
-                for column in sorted(bulk_update_columns)
-            }
-            upsert_stmt = insert_stmt.on_conflict_do_update(
-                index_elements=[DN.dn_number],
-                set_=update_mappings,
-            )
-        else:
-            upsert_stmt = insert_stmt.on_conflict_do_nothing(
-                index_elements=[DN.dn_number]
-            )
+    create_payloads = list(create_payload_by_number.values())
+    update_payloads = list(update_payload_by_number.values())
 
+    if create_payloads or update_payloads:
         db_start = perf_counter()
-        db.execute(upsert_stmt, list(payload_by_number.values()))
+
+        if create_payloads:
+            insert_stmt = insert(DN).on_conflict_do_nothing(index_elements=[DN.dn_number])
+            db.execute(insert_stmt, create_payloads)
+
+        if update_payloads:
+            db.bulk_update_mappings(DN, update_payloads)
+
         db.commit()
         dn_sync_logger.debug(
-            "Bulk upsert committed for %d DN entries in %.3fs",
-            len(payload_by_number),
+            "Persisted %d new and %d updated DN entries in %.3fs",
+            len(create_payloads),
+            len(update_payloads),
             perf_counter() - db_start,
         )
         dn_sync_logger.info(
-            "Upserted %d DN records (create=%d, update=%d)",
-            len(payload_by_number),
-            len(numbers_to_create),
-            len(numbers_to_update),
+            "Applied DN changes: created=%d, updated=%d",
+            len(create_payloads),
+            len(update_payloads),
+        )
+    else:
+        dn_sync_logger.info(
+            "No DN sheet changes detected; skipping database write",
         )
 
     normalization_start = perf_counter()
