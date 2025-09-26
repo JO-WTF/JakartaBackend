@@ -76,6 +76,29 @@ except FileNotFoundError:
 except Exception as exc:
     logger.debug("Failed to read gskey.json from %s: %s", GS_KEY_PATH, exc)
 
+
+def create_gspread_client(*, logger_obj: logging.Logger | None = None) -> gspread.Client:
+    """Create a gspread client using service account when available."""
+
+    log = logger_obj or dn_sync_logger
+    try:
+        log.debug(
+            "Attempting to create gspread client using service account file at %s",
+            GS_KEY_PATH,
+        )
+        gc = gspread.service_account(filename=str(GS_KEY_PATH))
+        log.info("Using gspread service account authentication")
+        return gc
+    except Exception as exc:
+        log.warning(
+            "Failed to authenticate using service account at %s: %s. Falling back to API key.",
+            GS_KEY_PATH,
+            exc,
+        )
+        gc = gspread.api_key(API_KEY)
+        log.info("Using gspread API key authentication")
+        return gc
+
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1217,8 +1240,8 @@ def sync_dn_sheet_to_db(db: Session, *, logger_obj: logging.Logger | None = None
     dn_sync_logger.info("Starting sync_dn_sheet_to_db run")
 
     try:
-        dn_sync_logger.debug("Creating gspread client with API key")
-        gc = gspread.api_key(API_KEY)
+        dn_sync_logger.debug("Creating gspread client")
+        gc = create_gspread_client(logger_obj=dn_sync_logger)
         dn_sync_logger.debug("Opening spreadsheet URL: %s", SPREADSHEET_URL)
         sh = gc.open_by_url(SPREADSHEET_URL)
         dn_sync_logger.debug("Spreadsheet opened successfully")
@@ -1630,7 +1653,7 @@ async def _shutdown_scheduler() -> None:
 @app.get("/api/dn/stats/{date}")
 async def get_dn_stats(date: str):
     # 初始化Google Sheets客户端
-    gc = gspread.api_key(API_KEY)
+    gc = create_gspread_client(logger_obj=logger)
     sh = gc.open_by_url(SPREADSHEET_URL)
 
     # 获取所有工作表数据
