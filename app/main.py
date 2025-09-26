@@ -1453,11 +1453,9 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
             dn_sync_logger.debug("Preparing creation for DN %s from sheet data", number)
 
         assignable_start = perf_counter()
-        assignable_fields = {
-            key: value
-            for key, value in filter_assignable_dn_fields(sheet_fields).items()
-            if key in mutable_columns
-        }
+        assignable_fields = filter_assignable_dn_fields(
+            sheet_fields, mutable_columns
+        )
         assignable_filter_total += perf_counter() - assignable_start
 
         non_null_start = perf_counter()
