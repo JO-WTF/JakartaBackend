@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Any
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, time
 from time import perf_counter
 import asyncio
@@ -1417,10 +1418,40 @@ def normalize_sheet_value(value: Any) -> Any:
     return value
 
 
-def sync_dn_sheet_to_db(db: Session) -> List[str]:
+@dataclass
+class DnSyncResult:
+    """Aggregate information about a DN sheet synchronisation run."""
+
+    synced_numbers: List[str]
+    created_count: int
+    updated_count: int
+    ignored_count: int
+
+
+def _values_match(existing_value: Any, new_value: Any) -> bool:
+    """Return True if the database value already matches the incoming value."""
+
+    if existing_value is None and new_value is None:
+        return True
+
+    if isinstance(existing_value, str):
+        existing_value = existing_value.strip()
+        if not existing_value:
+            existing_value = None
+
+    if isinstance(new_value, str):
+        new_value = new_value.strip()
+        if not new_value:
+            new_value = None
+
+    return existing_value == new_value
+
+
+def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
     """同步 Google Sheet 中的 DN 数据到数据库。
 
-    返回成功同步的 DN number 列表（按字典序升序）。
+    返回同步结果对象，包含按字典序排列的 DN number、
+    新增、更新及忽略的数量。
     """
     start_time = datetime.utcnow()
     dn_sync_logger.info("Starting sync_dn_sheet_to_db run")
@@ -1606,11 +1637,10 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
 
         comparison_start = perf_counter()
         if existing_dn:
-            changed_fields = {
-                key: value
-                for key, value in non_null_fields.items()
-                if getattr(existing_dn, key, None) != value
-            }
+            changed_fields: dict[str, Any] = {}
+            for key, value in non_null_fields.items():
+                if not _values_match(getattr(existing_dn, key, None), value):
+                    changed_fields[key] = value
             change_detection_total += perf_counter() - comparison_start
             if not changed_fields:
                 numbers_unchanged.add(number)
@@ -1687,6 +1717,7 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         len(numbers_to_update),
         processing_duration,
     )
+    unchanged_count = len(numbers_unchanged)
     dn_sync_logger.info(
         (
             "DN payload summary: create=%d (fields=%d, columns=%d), "
@@ -1698,12 +1729,15 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         len(numbers_to_update),
         updated_field_total,
         len(updated_columns),
-        len(numbers_unchanged),
+        unchanged_count,
         processing_duration,
     )
 
     create_payloads = list(create_payload_by_number.values())
     update_payloads = list(update_payload_by_number.values())
+
+    created_count = len(create_payloads)
+    updated_count = len(update_payloads)
 
     if create_payloads or update_payloads:
         db_start = perf_counter()
@@ -1718,14 +1752,14 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         db.commit()
         dn_sync_logger.debug(
             "Persisted %d new and %d updated DN entries in %.3fs",
-            len(create_payloads),
-            len(update_payloads),
+            created_count,
+            updated_count,
             perf_counter() - db_start,
         )
         dn_sync_logger.info(
             "Applied DN changes: created=%d, updated=%d",
-            len(create_payloads),
-            len(update_payloads),
+            created_count,
+            updated_count,
         )
     else:
         dn_sync_logger.info(
@@ -1740,24 +1774,34 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
     )
 
     dn_sync_logger.info(
-        "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, unique_dns=%d, "
-        "skipped_missing=%d, skipped_empty=%d, duration=%.3fs",
+        (
+            "Completed sync_dn_sheet_to_db run: processed_rows=%d, valid_records=%d, "
+            "unique_dns=%d, skipped_missing=%d, skipped_empty=%d, updated=%d, "
+            "ignored=%d, duration=%.3fs"
+        ),
         total_rows,
         len(records),
         len(dn_numbers),
         skipped_missing_number,
         skipped_empty_payload,
+        updated_count,
+        unchanged_count,
         (datetime.utcnow() - start_time).total_seconds(),
     )
 
-    return sorted(dn_numbers)
+    return DnSyncResult(
+        synced_numbers=sorted(dn_numbers),
+        created_count=created_count,
+        updated_count=updated_count,
+        ignored_count=unchanged_count,
+    )
 
 
-def _sync_dn_sheet_with_new_session() -> List[str]:
+def _sync_dn_sheet_with_new_session() -> DnSyncResult:
     db = SessionLocal()
     try:
         try:
-            synced_numbers = sync_dn_sheet_to_db(db)
+            result = sync_dn_sheet_to_db(db)
         except Exception as exc:
             dn_sync_logger.exception(
                 "sync_dn_sheet_to_db raised an error during manual trigger: %s", exc
@@ -1772,8 +1816,15 @@ def _sync_dn_sheet_with_new_session() -> List[str]:
             )
             raise
         else:
+            synced_numbers = result.synced_numbers
             message = (
-                "Synced %d DN numbers from Google Sheet" % len(synced_numbers)
+                "Synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)"
+                % (
+                    len(synced_numbers),
+                    result.created_count,
+                    result.updated_count,
+                    result.ignored_count,
+                )
                 if synced_numbers
                 else "Google Sheet returned no DN rows to sync"
             )
@@ -1783,20 +1834,26 @@ def _sync_dn_sheet_with_new_session() -> List[str]:
                 synced_numbers=synced_numbers,
                 message=message,
             )
-            return synced_numbers
+            return result
     finally:
         db.close()
 
 
-async def run_dn_sheet_sync_once() -> List[str]:
+async def run_dn_sheet_sync_once() -> DnSyncResult:
     return await asyncio.to_thread(_sync_dn_sheet_with_new_session)
 
 
 async def _scheduled_dn_sheet_sync() -> None:
     try:
-        synced_numbers = await run_dn_sheet_sync_once()
-        if synced_numbers:
-            logger.info("Synced %d DN numbers from Google Sheet", len(synced_numbers))
+        result = await run_dn_sheet_sync_once()
+        if result.synced_numbers:
+            logger.info(
+                "Synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)",
+                len(result.synced_numbers),
+                result.created_count,
+                result.updated_count,
+                result.ignored_count,
+            )
     except Exception:
         logger.exception("Scheduled DN sheet sync failed")
 
@@ -1804,7 +1861,7 @@ async def _scheduled_dn_sheet_sync() -> None:
 @app.post("/api/dn/sync")
 def trigger_dn_sync():
     try:
-        synced_numbers = _sync_dn_sheet_with_new_session()
+        result = _sync_dn_sheet_with_new_session()
     except Exception:
         logger.exception("Manual DN sheet sync failed")
         return JSONResponse(
@@ -1818,8 +1875,11 @@ def trigger_dn_sync():
 
     return {
         "ok": True,
-        "synced_count": len(synced_numbers),
-        "dn_numbers": synced_numbers,
+        "synced_count": len(result.synced_numbers),
+        "created_count": result.created_count,
+        "updated_count": result.updated_count,
+        "ignored_count": result.ignored_count,
+        "dn_numbers": result.synced_numbers,
     }
 
 
