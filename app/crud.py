@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence
-from datetime import datetime
+from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence, Literal
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, case, func, or_
-from .models import DU, DURecord, DN, DNRecord, DNSyncLog
+from .models import DU, DURecord, DN, DNRecord, DNSyncLog, Vehicle
 from .dn_columns import filter_assignable_dn_fields
 
 
@@ -157,6 +157,120 @@ def get_existing_du_ids(db: Session, du_ids: Iterable[str]) -> Set[str]:
 
     rows = db.query(DU.du_id).filter(DU.du_id.in_(unique_ids)).all()
     return {row[0] for row in rows}
+
+
+def _normalize_vehicle_plate(vehicle_plate: str) -> str:
+    return "".join(vehicle_plate.split()).upper()
+
+
+def _normalize_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc)
+
+
+def upsert_vehicle_signin(
+    db: Session,
+    *,
+    vehicle_plate: str,
+    lsp: str,
+    vehicle_type: str | None = None,
+    driver_name: str | None = None,
+    contact_number: str | None = None,
+    arrive_time: datetime | None = None,
+) -> Vehicle:
+    plate = _normalize_vehicle_plate(vehicle_plate)
+    if not plate:
+        raise ValueError("vehicle_plate is required")
+
+    arrive_time = _normalize_timestamp(arrive_time) or datetime.now(timezone.utc)
+
+    vehicle = (
+        db.query(Vehicle)
+        .filter(func.upper(Vehicle.vehicle_plate) == plate)
+        .one_or_none()
+    )
+
+    if vehicle is None:
+        vehicle = Vehicle(vehicle_plate=plate, lsp=lsp)
+
+    vehicle.vehicle_type = vehicle_type
+    vehicle.driver_name = driver_name
+    vehicle.contact_number = contact_number
+    vehicle.lsp = lsp
+    vehicle.arrive_time = arrive_time
+    vehicle.depart_time = None
+    vehicle.status = "arrived"
+
+    db.add(vehicle)
+    db.commit()
+    db.refresh(vehicle)
+    return vehicle
+
+
+def get_vehicle_by_plate(db: Session, vehicle_plate: str) -> Vehicle | None:
+    plate = _normalize_vehicle_plate(vehicle_plate)
+    if not plate:
+        return None
+
+    return (
+        db.query(Vehicle)
+        .filter(func.upper(Vehicle.vehicle_plate) == plate)
+        .one_or_none()
+    )
+
+
+def mark_vehicle_departed(
+    db: Session,
+    *,
+    vehicle_plate: str,
+    depart_time: datetime | None = None,
+) -> Vehicle | None:
+    vehicle = get_vehicle_by_plate(db, vehicle_plate)
+    if vehicle is None:
+        return None
+
+    depart_time = _normalize_timestamp(depart_time) or datetime.now(timezone.utc)
+
+    vehicle.depart_time = depart_time
+    vehicle.status = "departed"
+
+    db.add(vehicle)
+    db.commit()
+    db.refresh(vehicle)
+    return vehicle
+
+
+def list_vehicles(
+    db: Session,
+    *,
+    status: str | None = None,
+    filter_by: Literal["arrive_time", "depart_time"] = "arrive_time",
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> List[Vehicle]:
+    query = db.query(Vehicle)
+
+    if status:
+        query = query.filter(Vehicle.status == status)
+
+    if date_from is not None or date_to is not None:
+        column = Vehicle.depart_time if filter_by == "depart_time" else Vehicle.arrive_time
+        if filter_by == "depart_time":
+            query = query.filter(Vehicle.depart_time.isnot(None))
+        else:
+            query = query.filter(Vehicle.arrive_time.isnot(None))
+
+        if date_from is not None:
+            query = query.filter(column >= date_from)
+        if date_to is not None:
+            query = query.filter(column <= date_to)
+
+    return query.order_by(Vehicle.arrive_time.desc(), Vehicle.id.desc()).all()
 
 
 def ensure_dn(db: Session, dn_number: str, **fields: Any) -> DN:

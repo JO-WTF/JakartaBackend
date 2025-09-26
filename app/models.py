@@ -3,6 +3,28 @@ from sqlalchemy import Column, String, Integer, DateTime, Text
 from sqlalchemy.sql import func
 from .db import Base
 
+
+class Vehicle(Base):
+    __tablename__ = "vehicle"
+
+    id = Column(Integer, primary_key=True, index=True)
+    vehicle_plate = Column(String(32), unique=True, index=True, nullable=False)
+    lsp = Column(String(128), nullable=False)
+    vehicle_type = Column(String(64), nullable=True)
+    driver_name = Column(String(128), nullable=True)
+    contact_number = Column(String(64), nullable=True)
+    status = Column(String(16), nullable=False, default="arrived")
+    arrive_time = Column(DateTime(timezone=True), nullable=True)
+    depart_time = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class DU(Base):
     __tablename__ = "du"
     id = Column(Integer, primary_key=True, index=True)
