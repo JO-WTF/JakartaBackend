@@ -826,7 +826,7 @@ def update_dn(
         updated_by=updated_by_value,
     )
 
-    gspread_dry_run: dict[str, Any] | None = None
+    gspread_update_result: dict[str, Any] | None = None
     should_check_sheet = (
         gs_sheet_name
         and isinstance(gs_row_index, int)
@@ -840,7 +840,7 @@ def update_dn(
             column_names = get_sheet_columns()
             status_column_position = column_names.index("status_delivery") + 1
         except ValueError:
-            gspread_dry_run = {
+            gspread_update_result = {
                 "sheet": gs_sheet_name,
                 "row": gs_row_index,
                 "column_name": "status_delivery",
@@ -851,7 +851,7 @@ def update_dn(
             try:
                 dn_column_position = column_names.index("dn_number") + 1
             except ValueError:
-                gspread_dry_run = {
+                gspread_update_result = {
                     "sheet": gs_sheet_name,
                     "row": gs_row_index,
                     "column_name": "dn_number",
@@ -880,7 +880,7 @@ def update_dn(
                             dn_column_values = worksheet.col_values(dn_column_position)
                         except Exception as search_exc:
                             search_details["search_error"] = str(search_exc)
-                            gspread_dry_run = search_details
+                            gspread_update_result = search_details
                         else:
                             found_row_index: int | None = None
                             for idx, value in enumerate(dn_column_values, start=1):
@@ -890,16 +890,16 @@ def update_dn(
 
                             if found_row_index is None:
                                 search_details["search_result"] = "dn_number not found in sheet"
-                                gspread_dry_run = search_details
+                                gspread_update_result = search_details
                             else:
                                 try:
                                     cell = worksheet.cell(found_row_index, status_column_position)
                                 except Exception as fetch_exc:
                                     search_details["search_row"] = found_row_index
                                     search_details["search_error"] = str(fetch_exc)
-                                    gspread_dry_run = search_details
+                                    gspread_update_result = search_details
                                 else:
-                                    gspread_dry_run = {
+                                    update_details = {
                                         "sheet": gs_sheet_name,
                                         "row": found_row_index,
                                         "column": status_column_position,
@@ -909,18 +909,53 @@ def update_dn(
                                         "found_via_search": True,
                                         "original_row_mismatch": gs_row_index,
                                     }
+                                    try:
+                                        worksheet.update_cell(
+                                            found_row_index,
+                                            status_column_position,
+                                            delivery_status_value,
+                                        )
+                                    except Exception as update_exc:
+                                        update_details["update_error"] = str(update_exc)
+                                        gspread_update_result = update_details
+                                    else:
+                                        update_details["updated"] = True
+                                        gspread_update_result = update_details
                     else:
-                        cell = worksheet.cell(gs_row_index, status_column_position)
-                        gspread_dry_run = {
-                            "sheet": gs_sheet_name,
-                            "row": gs_row_index,
-                            "column": status_column_position,
-                            "column_name": "status_delivery",
-                            "current_value": cell.value,
-                            "new_value": delivery_status_value,
-                        }
+                        try:
+                            cell = worksheet.cell(gs_row_index, status_column_position)
+                        except Exception as fetch_exc:
+                            gspread_update_result = {
+                                "sheet": gs_sheet_name,
+                                "row": gs_row_index,
+                                "column": status_column_position,
+                                "column_name": "status_delivery",
+                                "error": str(fetch_exc),
+                                "new_value": delivery_status_value,
+                            }
+                        else:
+                            update_details = {
+                                "sheet": gs_sheet_name,
+                                "row": gs_row_index,
+                                "column": status_column_position,
+                                "column_name": "status_delivery",
+                                "current_value": cell.value,
+                                "new_value": delivery_status_value,
+                            }
+                            try:
+                                worksheet.update_cell(
+                                    gs_row_index,
+                                    status_column_position,
+                                    delivery_status_value,
+                                )
+                            except Exception as update_exc:
+                                update_details["update_error"] = str(update_exc)
+                                gspread_update_result = update_details
+                            else:
+                                update_details["updated"] = True
+                                gspread_update_result = update_details
                 except Exception as exc:
-                    gspread_dry_run = {
+                    gspread_update_result = {
                         "sheet": gs_sheet_name,
                         "row": gs_row_index,
                         "column": status_column_position,
@@ -930,8 +965,8 @@ def update_dn(
                     }
 
     response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}
-    if gspread_dry_run is not None:
-        response["delivery_status_dry_run"] = gspread_dry_run
+    if gspread_update_result is not None:
+        response["delivery_status_update_result"] = gspread_update_result
 
     return response
 
