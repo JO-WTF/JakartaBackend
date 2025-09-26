@@ -777,9 +777,6 @@ def update_dn(
             delivery_status_value = None
 
     existing_dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
-    existing_delivery_status = (
-        existing_dn.status_delivery if existing_dn is not None else None
-    )
     gs_sheet_name = existing_dn.gs_sheet if existing_dn is not None else None
     raw_gs_row = existing_dn.gs_row if existing_dn is not None else None
     gs_row_index: int | None
@@ -832,7 +829,6 @@ def update_dn(
         and isinstance(gs_row_index, int)
         and gs_row_index > 0
         and delivery_status_value is not None
-        and delivery_status_value != (existing_delivery_status or "")
     )
 
     if should_check_sheet:
@@ -893,7 +889,9 @@ def update_dn(
                                 gspread_update_result = search_details
                             else:
                                 try:
-                                    cell = worksheet.cell(found_row_index, status_column_position)
+                                    cell = worksheet.cell(
+                                        found_row_index, status_column_position
+                                    )
                                 except Exception as fetch_exc:
                                     search_details["search_row"] = found_row_index
                                     search_details["search_error"] = str(fetch_exc)
@@ -909,18 +907,26 @@ def update_dn(
                                         "found_via_search": True,
                                         "original_row_mismatch": gs_row_index,
                                     }
-                                    try:
-                                        worksheet.update_cell(
-                                            found_row_index,
-                                            status_column_position,
-                                            delivery_status_value,
-                                        )
-                                    except Exception as update_exc:
-                                        update_details["update_error"] = str(update_exc)
+                                    normalized_current_value = (cell.value or "").strip()
+                                    if normalized_current_value == delivery_status_value:
+                                        update_details["skipped"] = True
+                                        update_details[
+                                            "normalized_current_value"
+                                        ] = normalized_current_value
                                         gspread_update_result = update_details
                                     else:
-                                        update_details["updated"] = True
-                                        gspread_update_result = update_details
+                                        try:
+                                            worksheet.update_cell(
+                                                found_row_index,
+                                                status_column_position,
+                                                delivery_status_value,
+                                            )
+                                        except Exception as update_exc:
+                                            update_details["update_error"] = str(update_exc)
+                                            gspread_update_result = update_details
+                                        else:
+                                            update_details["updated"] = True
+                                            gspread_update_result = update_details
                     else:
                         try:
                             cell = worksheet.cell(gs_row_index, status_column_position)
@@ -942,18 +948,26 @@ def update_dn(
                                 "current_value": cell.value,
                                 "new_value": delivery_status_value,
                             }
-                            try:
-                                worksheet.update_cell(
-                                    gs_row_index,
-                                    status_column_position,
-                                    delivery_status_value,
-                                )
-                            except Exception as update_exc:
-                                update_details["update_error"] = str(update_exc)
+                            normalized_current_value = (cell.value or "").strip()
+                            if normalized_current_value == delivery_status_value:
+                                update_details["skipped"] = True
+                                update_details[
+                                    "normalized_current_value"
+                                ] = normalized_current_value
                                 gspread_update_result = update_details
                             else:
-                                update_details["updated"] = True
-                                gspread_update_result = update_details
+                                try:
+                                    worksheet.update_cell(
+                                        gs_row_index,
+                                        status_column_position,
+                                        delivery_status_value,
+                                    )
+                                except Exception as update_exc:
+                                    update_details["update_error"] = str(update_exc)
+                                    gspread_update_result = update_details
+                                else:
+                                    update_details["updated"] = True
+                                    gspread_update_result = update_details
                 except Exception as exc:
                     gspread_update_result = {
                         "sheet": gs_sheet_name,
