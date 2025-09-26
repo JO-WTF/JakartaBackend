@@ -8,6 +8,7 @@ from typing import Optional, List, Any
 from datetime import datetime, timedelta, timezone, time
 import asyncio
 import re, os, unicodedata
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -225,6 +226,14 @@ VALID_STATUS_DESCRIPTION = ", ".join(VALID_STATUSES)
 
 VEHICLE_VALID_STATUSES: tuple[str, ...] = ("arrived", "departed")
 
+_ZERO_WIDTH_CHARS = "\u200b\ufeff"
+_ZERO_WIDTH_TRANS = {ord(ch): None for ch in _ZERO_WIDTH_CHARS}
+_FULLWIDTH_DIGIT_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
+_FULLWIDTH_LETTER_TRANS = str.maketrans(
+    "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ",
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+)
+
 
 class DNColumnExtensionRequest(BaseModel):
     columns: List[str] = Field(
@@ -253,30 +262,26 @@ class VehicleDepartRequest(BaseModel):
     class Config:
         populate_by_name = True
 
+@lru_cache(maxsize=4096)
 def normalize_du(s: str) -> str:
     """NFC 规整、去零宽、全角转半角、去空白、统一大写"""
     if not s:
         return ""
-    
+
     # NFC 规整
     s = unicodedata.normalize("NFC", s)
-    
+
     # 去零宽、BOM字符
-    s = s.replace("\u200b", "").replace("\ufeff", "")
-    
+    s = s.translate(_ZERO_WIDTH_TRANS)
+
     # 去空白并统一为大写
     s = s.strip().upper()
-    
+
     # 转换全角数字为半角
-    trans = str.maketrans("０１２３４５６７８９", "0123456789")
-    s = s.translate(trans)
-    
+    s = s.translate(_FULLWIDTH_DIGIT_TRANS)
+
     # 转换全角字母为半角
-    trans_fullwidth_letters = str.maketrans(
-        "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", 
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    )
-    s = s.translate(trans_fullwidth_letters)
+    s = s.translate(_FULLWIDTH_LETTER_TRANS)
 
     return s
 
@@ -1112,22 +1117,34 @@ def fetch_plan_sheets(sheet_url):
     )
     return plan_sheets
 
+@lru_cache(maxsize=2048)
 def parse_date(date_str: str):
     """解析日期字符串"""
-    current_year = datetime.now().year
+    if date_str is None:
+        return None
+
+    if isinstance(date_str, datetime):
+        return date_str
+
+    if not isinstance(date_str, str):
+        return date_str
+
+    normalized = date_str
 
     # 替换月份简写
     for incorrect, correct in MONTH_MAP.items():
-        date_str = date_str.replace(incorrect, correct)
+        normalized = normalized.replace(incorrect, correct)
+
+    trimmed = normalized.strip()
 
     # 处理日期字符串
     for fmt in DATE_FORMATS:
         try:
-            return datetime.strptime(date_str.strip(), fmt)
+            return datetime.strptime(trimmed, fmt)
         except ValueError:
             continue
 
-    return date_str
+    return normalized
 
 
 def normalize_database_fields(db: Session) -> None:
@@ -1268,25 +1285,54 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
     dn_sync_logger.debug("DataFrame contains %d total rows", total_rows)
 
     if not combined_df.empty:
-        for record in combined_df.to_dict(orient="records"):
-            cleaned = {key: normalize_sheet_value(value) for key, value in record.items()}
-            plan_mos_date_value = cleaned.get("plan_mos_date")
-            if isinstance(plan_mos_date_value, str) and plan_mos_date_value:
-                parsed_plan_mos_date = parse_date(plan_mos_date_value)
-                if isinstance(parsed_plan_mos_date, datetime):
-                    cleaned["plan_mos_date"] = parsed_plan_mos_date.strftime("%d %b %y")
-            raw_number = cleaned.get("dn_number")
-            raw_number_str = str(raw_number).strip() if raw_number is not None else ""
-            normalized_number = normalize_dn(raw_number_str) if raw_number_str else ""
-            if not normalized_number:
-                skipped_missing_number += 1
-                continue
-            cleaned["dn_number"] = normalized_number
-            if all(value is None for key, value in cleaned.items() if key != "dn_number"):
-                skipped_empty_payload += 1
-                continue
-            records.append(cleaned)
-            dn_numbers.add(normalized_number)
+        columns_tuple = tuple(sheet_columns)
+        try:
+            dn_index = sheet_columns.index("dn_number")
+        except ValueError:
+            dn_sync_logger.warning("Sheet data missing 'dn_number' column; skipping processing")
+            dn_index = None
+
+        plan_mos_index = None
+        if "plan_mos_date" in sheet_columns:
+            plan_mos_index = sheet_columns.index("plan_mos_date")
+
+        if dn_index is not None:
+            for row_values in combined_df.itertuples(index=False, name=None):
+                normalized_row: list[Any] = []
+                has_payload = False
+
+                for idx, raw_value in enumerate(row_values):
+                    normalized_value = normalize_sheet_value(raw_value)
+                    if (
+                        plan_mos_index is not None
+                        and idx == plan_mos_index
+                        and isinstance(normalized_value, str)
+                        and normalized_value
+                    ):
+                        parsed_plan_mos_date = parse_date(normalized_value)
+                        if isinstance(parsed_plan_mos_date, datetime):
+                            normalized_value = parsed_plan_mos_date.strftime("%d %b %y")
+
+                    if idx != dn_index and normalized_value is not None:
+                        has_payload = True
+
+                    normalized_row.append(normalized_value)
+
+                raw_number = normalized_row[dn_index]
+                raw_number_str = str(raw_number).strip() if raw_number is not None else ""
+                normalized_number = normalize_dn(raw_number_str) if raw_number_str else ""
+                if not normalized_number:
+                    skipped_missing_number += 1
+                    continue
+
+                if not has_payload:
+                    skipped_empty_payload += 1
+                    continue
+
+                normalized_row[dn_index] = normalized_number
+                cleaned = dict(zip(columns_tuple, normalized_row))
+                records.append(cleaned)
+                dn_numbers.add(normalized_number)
     else:
         dn_sync_logger.info("Combined DataFrame is empty; no rows to process")
 
