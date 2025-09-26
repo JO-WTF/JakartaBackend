@@ -100,19 +100,29 @@ def create_gspread_client() -> gspread.Client:
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-dn_sync_logger = logger.getChild("dn_sync")
 
-if not any(
-    isinstance(handler, logging.FileHandler)
-    and getattr(handler, "baseFilename", None) == str(DN_SYNC_LOG_PATH)
-    for handler in dn_sync_logger.handlers
-):
-    file_handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+def _configure_dn_sync_logger(base_logger: logging.Logger) -> logging.Logger:
+    """Return a child logger dedicated to DN sync operations."""
+
+    child_logger = base_logger.getChild("dn_sync")
+
+    handler_configured = any(
+        isinstance(handler, logging.FileHandler)
+        and getattr(handler, "baseFilename", None) == str(DN_SYNC_LOG_PATH)
+        for handler in child_logger.handlers
     )
-    file_handler.setLevel(logging.DEBUG)
-    dn_sync_logger.addHandler(file_handler)
+    if not handler_configured:
+        file_handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+        )
+        file_handler.setLevel(logging.DEBUG)
+        child_logger.addHandler(file_handler)
+
+    return child_logger
+
+
+dn_sync_logger = _configure_dn_sync_logger(logger)
 
 SHEET_SYNC_INTERVAL_SECONDS = 300
 _scheduler: AsyncIOScheduler | None = None
