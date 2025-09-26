@@ -67,6 +67,15 @@ app = FastAPI(title="DU Backend API", version="1.1.0")
 
 logger = logging.getLogger("uvicorn.error")
 
+GS_KEY_PATH = Path("/etc/secrets/gskey.json")
+try:
+    gs_key_content = GS_KEY_PATH.read_text(encoding="utf-8")
+    logger.info("Loaded gskey.json content: %s", gs_key_content)
+except FileNotFoundError:
+    logger.debug("gskey.json not found at %s, skipping", GS_KEY_PATH)
+except Exception as exc:
+    logger.debug("Failed to read gskey.json from %s: %s", GS_KEY_PATH, exc)
+
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
