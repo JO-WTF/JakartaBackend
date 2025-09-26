@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import re
 from typing import Iterable, List, Mapping
 
@@ -10,8 +9,7 @@ from sqlalchemy.orm import Session
 
 from .db import engine
 from .models import DN
-
-logger = logging.getLogger(__name__)
+from .logging_utils import logger
 
 # Base columns defined on the SQLAlchemy model when the application starts.
 _BASE_DN_COLUMNS = tuple(column.name for column in DN.__table__.columns)
