@@ -19,6 +19,7 @@ from .dn_columns import (
     get_sheet_columns,
     refresh_dynamic_columns,
     filter_assignable_dn_fields,
+    get_mutable_dn_columns,
 )
 from .time_utils import to_gmt7_iso, parse_gmt7_date_range
 from .crud import (
@@ -42,6 +43,7 @@ from .crud import (
     delete_dn_record,
     get_existing_dn_numbers,
     get_latest_dn_records_map,
+    get_dn_map_by_numbers,
     search_dn_list,
     create_dn_sync_log,
     get_latest_dn_sync_log,
@@ -228,11 +230,6 @@ VEHICLE_VALID_STATUSES: tuple[str, ...] = ("arrived", "departed")
 
 _ZERO_WIDTH_CHARS = "\u200b\ufeff"
 _ZERO_WIDTH_TRANS = {ord(ch): None for ch in _ZERO_WIDTH_CHARS}
-_FULLWIDTH_DIGIT_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
-_FULLWIDTH_LETTER_TRANS = str.maketrans(
-    "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ",
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
-)
 
 
 class DNColumnExtensionRequest(BaseModel):
@@ -264,7 +261,7 @@ class VehicleDepartRequest(BaseModel):
 
 @lru_cache(maxsize=4096)
 def normalize_du(s: str) -> str:
-    """NFC 规整、去零宽、全角转半角、去空白、统一大写"""
+    """NFC 规整、去零宽、去空白、统一大写"""
     if not s:
         return ""
 
@@ -276,12 +273,6 @@ def normalize_du(s: str) -> str:
 
     # 去空白并统一为大写
     s = s.strip().upper()
-
-    # 转换全角数字为半角
-    s = s.translate(_FULLWIDTH_DIGIT_TRANS)
-
-    # 转换全角字母为半角
-    s = s.translate(_FULLWIDTH_LETTER_TRANS)
 
     return s
 
@@ -1345,6 +1336,8 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         return []
 
     latest_records_for_update = get_latest_dn_records_map(db, dn_numbers)
+    existing_dn_map = get_dn_map_by_numbers(db, dn_numbers)
+    mutable_columns = set(get_mutable_dn_columns())
     dn_sync_logger.debug(
         "Fetched %d existing DN records for potential update", len(latest_records_for_update)
     )
@@ -1353,6 +1346,7 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
     bulk_update_columns: set[str] = set()
     numbers_to_create: set[str] = set()
     numbers_to_update: set[str] = set()
+    numbers_unchanged: set[str] = set()
 
     for entry in records:
         number = entry["dn_number"]
@@ -1360,6 +1354,7 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
             key: entry.get(key) for key in sheet_columns if key != "dn_number"
         }
         latest = latest_records_for_update.get(number)
+        existing_dn = existing_dn_map.get(number)
         if latest:
             if not sheet_fields.get("du_id") and latest.du_id:
                 sheet_fields["du_id"] = latest.du_id
@@ -1372,24 +1367,43 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
                     "lat": latest.lat,
                 }
             )
-            if number not in numbers_to_update:
-                dn_sync_logger.debug(
-                    "Preparing update for existing DN %s with preserved fields", number
-                )
-            numbers_to_update.add(number)
-        else:
-            if number not in numbers_to_create:
-                dn_sync_logger.debug("Preparing creation for DN %s from sheet data", number)
-            numbers_to_create.add(number)
+        elif not existing_dn and number not in numbers_to_create:
+            dn_sync_logger.debug("Preparing creation for DN %s from sheet data", number)
 
-        assignable_fields = filter_assignable_dn_fields(sheet_fields)
+        assignable_fields = {
+            key: value
+            for key, value in filter_assignable_dn_fields(sheet_fields).items()
+            if key in mutable_columns
+        }
         non_null_fields = {
             key: value for key, value in assignable_fields.items() if value is not None
         }
-        if non_null_fields:
+        if not non_null_fields:
+            continue
+
+        if existing_dn:
+            changed_fields = {
+                key: value
+                for key, value in non_null_fields.items()
+                if getattr(existing_dn, key, None) != value
+            }
+            if not changed_fields:
+                numbers_unchanged.add(number)
+                continue
+
+            if number not in numbers_to_update:
+                dn_sync_logger.debug(
+                    "Preparing update for existing DN %s after detecting differences", number
+                )
+            numbers_to_update.add(number)
+            bulk_update_columns.update(changed_fields.keys())
+            payload = payload_by_number.setdefault(number, {"dn_number": number})
+            payload.update(changed_fields)
+        else:
+            numbers_to_create.add(number)
             bulk_update_columns.update(non_null_fields.keys())
-        payload = payload_by_number.setdefault(number, {"dn_number": number})
-        payload.update(non_null_fields)
+            payload = payload_by_number.setdefault(number, {"dn_number": number})
+            payload.update(non_null_fields)
 
     dn_sync_logger.debug(
         "Prepared %d DN payloads for bulk upsert (create=%d, update=%d)",
@@ -1398,9 +1412,10 @@ def sync_dn_sheet_to_db(db: Session) -> List[str]:
         len(numbers_to_update),
     )
     dn_sync_logger.info(
-        "DN payload summary: create=%d, update=%d, bulk_columns=%d",
+        "DN payload summary: create=%d, update=%d, unchanged=%d, bulk_columns=%d",
         len(numbers_to_create),
         len(numbers_to_update),
+        len(numbers_unchanged),
         len(bulk_update_columns),
     )
 

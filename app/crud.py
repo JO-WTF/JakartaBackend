@@ -573,6 +573,23 @@ def get_existing_dn_numbers(db: Session, dn_numbers: Iterable[str]) -> Set[str]:
     return {row[0] for row in rows}
 
 
+def get_dn_map_by_numbers(db: Session, dn_numbers: Iterable[str]) -> Dict[str, DN]:
+    """Return a mapping of dn_number to DN rows for the provided identifiers."""
+
+    numbers = [number for number in {number for number in dn_numbers if number}]
+    if not numbers:
+        return {}
+
+    rows = (
+        db.query(DN)
+        .filter(DN.dn_number.in_(numbers))
+        .order_by(DN.dn_number.asc())
+        .all()
+    )
+
+    return {row.dn_number: row for row in rows}
+
+
 def get_latest_dn_records_map(db: Session, dn_numbers: Iterable[str]) -> Dict[str, DNRecord]:
     unique_numbers = [number for number in {number for number in dn_numbers if number}]
     if not unique_numbers:
