@@ -101,25 +101,32 @@ DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expan
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _configure_dn_sync_logger(base_logger: logging.Logger) -> logging.Logger:
-    """Return a child logger dedicated to DN sync operations."""
+class _DnSyncLogFilter(logging.Filter):
+    """Filter ensuring only DN sync records reach the file handler."""
 
-    child_logger = base_logger.getChild("dn_sync")
+    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+        return bool(getattr(record, "dn_sync", False))
 
-    handler_configured = any(
-        isinstance(handler, logging.FileHandler)
-        and getattr(handler, "baseFilename", None) == str(DN_SYNC_LOG_PATH)
-        for handler in child_logger.handlers
-    )
-    if not handler_configured:
-        file_handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        )
-        file_handler.setLevel(logging.DEBUG)
-        child_logger.addHandler(file_handler)
 
-    return child_logger
+_dn_sync_file_handler: logging.FileHandler | None = None
+
+
+def _configure_dn_sync_logger(base_logger: logging.Logger) -> logging.LoggerAdapter:
+    """Configure a DN sync logger that still propagates to the base logger."""
+
+    global _dn_sync_file_handler
+
+    if _dn_sync_file_handler is None or getattr(
+        _dn_sync_file_handler, "baseFilename", None
+    ) != str(DN_SYNC_LOG_PATH):
+        handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        handler.setLevel(logging.DEBUG)
+        handler.addFilter(_DnSyncLogFilter())
+        base_logger.addHandler(handler)
+        _dn_sync_file_handler = handler
+
+    return logging.LoggerAdapter(base_logger, {"dn_sync": True})
 
 
 dn_sync_logger = _configure_dn_sync_logger(logger)
@@ -1488,8 +1495,8 @@ def get_latest_dn_sync_log_entry(db: Session = Depends(get_db)):
 
 @app.get("/api/dn/sync/log/file")
 def download_dn_sync_log():
-    for handler in dn_sync_logger.handlers:
-        flush = getattr(handler, "flush", None)
+    if _dn_sync_file_handler is not None:
+        flush = getattr(_dn_sync_file_handler, "flush", None)
         if callable(flush):
             flush()
 
