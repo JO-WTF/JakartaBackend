@@ -100,19 +100,19 @@ def create_gspread_client() -> gspread.Client:
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+dn_sync_logger = logger.getChild("dn_sync")
+
 if not any(
     isinstance(handler, logging.FileHandler)
     and getattr(handler, "baseFilename", None) == str(DN_SYNC_LOG_PATH)
-    for handler in logger.handlers
+    for handler in dn_sync_logger.handlers
 ):
     file_handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     )
     file_handler.setLevel(logging.DEBUG)
-    logger.addHandler(file_handler)
-
-dn_sync_logger = logger
+    dn_sync_logger.addHandler(file_handler)
 
 SHEET_SYNC_INTERVAL_SECONDS = 300
 _scheduler: AsyncIOScheduler | None = None
