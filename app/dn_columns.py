@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, List, Mapping
+from typing import Iterable, List, Mapping, Collection
 
 from sqlalchemy import Column, Text as SAText, inspect as sa_inspect, text
 from sqlalchemy.engine import Engine
@@ -105,6 +105,8 @@ def refresh_dynamic_columns(bind: Engine | Session | None = None) -> List[str]:
 
 
 def ensure_dynamic_columns_loaded(bind: Engine | Session | None = None) -> None:
+    """Populate the cached list of dynamic DN columns if it is currently empty."""
+
     if not _dynamic_columns:
         refresh_dynamic_columns(bind)
 
@@ -127,14 +129,26 @@ def get_mutable_dn_columns() -> List[str]:
     return allowed
 
 
-def filter_assignable_dn_fields(fields: Mapping[str, object]) -> dict[str, object]:
+def filter_assignable_dn_fields(
+    fields: Mapping[str, object],
+    allowed_columns: Collection[str] | None = None,
+) -> dict[str, object]:
     """Return a dict that only includes DN columns that can be updated."""
 
-    ensure_dynamic_columns_loaded()
-    allowed = set(get_mutable_dn_columns())
+    if allowed_columns is None:
+        ensure_dynamic_columns_loaded()
+        allowed: Collection[str] | None = get_mutable_dn_columns()
+    else:
+        allowed = allowed_columns
+
+    if isinstance(allowed, set):
+        allowed_set = allowed
+    else:
+        allowed_set = set(allowed)
+
     result: dict[str, object] = {}
     for key, value in fields.items():
-        if key in allowed:
+        if key in allowed_set:
             result[key] = value
     return result
 
