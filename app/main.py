@@ -726,6 +726,7 @@ def extend_dn_columns_api(
 def update_dn(
     dnNumber: str = Form(...),
     status: str = Form(...),
+    delivery_status: str | None = Form(None),
     remark: str | None = Form(None),
     duId: str | None = Form(None),
     photo: UploadFile | None = File(None),
@@ -760,6 +761,29 @@ def update_dn(
         if updated_by_value == "":
             updated_by_value = None
 
+    delivery_status_value = None
+    if delivery_status is not None:
+        delivery_status_value = delivery_status.strip()
+        if delivery_status_value == "":
+            delivery_status_value = None
+
+    existing_dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
+    existing_delivery_status = (
+        existing_dn.status_delivery if existing_dn is not None else None
+    )
+    gs_sheet_name = existing_dn.gs_sheet if existing_dn is not None else None
+    raw_gs_row = existing_dn.gs_row if existing_dn is not None else None
+    gs_row_index: int | None
+    if isinstance(raw_gs_row, int):
+        gs_row_index = raw_gs_row
+    elif isinstance(raw_gs_row, str):
+        try:
+            gs_row_index = int(raw_gs_row)
+        except ValueError:
+            gs_row_index = None
+    else:
+        gs_row_index = None
+
     ensure_payload: dict[str, Any] = {
         "du_id": du_id_normalized,
         "status": status,
@@ -768,6 +792,8 @@ def update_dn(
         "lng": lng_val,
         "lat": lat_val,
     }
+    if delivery_status_value is not None:
+        ensure_payload["status_delivery"] = delivery_status_value
     if updated_by_value is not None:
         ensure_payload["last_updated_by"] = updated_by_value
 
@@ -790,7 +816,115 @@ def update_dn(
         du_id=du_id_normalized,
         updated_by=updated_by_value,
     )
-    return {"ok": True, "id": rec.id, "photo": photo_url}
+
+    gspread_dry_run: dict[str, Any] | None = None
+    should_check_sheet = (
+        gs_sheet_name
+        and isinstance(gs_row_index, int)
+        and gs_row_index > 0
+        and delivery_status_value is not None
+        and delivery_status_value != (existing_delivery_status or "")
+    )
+
+    if should_check_sheet:
+        try:
+            column_names = get_sheet_columns()
+            status_column_position = column_names.index("status_delivery") + 1
+        except ValueError:
+            gspread_dry_run = {
+                "sheet": gs_sheet_name,
+                "row": gs_row_index,
+                "column_name": "status_delivery",
+                "error": "status_delivery column not found in sheet definition",
+                "new_value": delivery_status_value,
+            }
+        else:
+            try:
+                dn_column_position = column_names.index("dn_number") + 1
+            except ValueError:
+                gspread_dry_run = {
+                    "sheet": gs_sheet_name,
+                    "row": gs_row_index,
+                    "column_name": "dn_number",
+                    "error": "dn_number column not found in sheet definition",
+                    "new_value": delivery_status_value,
+                }
+            else:
+                try:
+                    gc = create_gspread_client()
+                    sh = gc.open_by_url(SPREADSHEET_URL)
+                    worksheet = sh.worksheet(gs_sheet_name)
+                    dn_cell_value = worksheet.cell(gs_row_index, dn_column_position).value
+                    normalized_sheet_dn = normalize_dn(dn_cell_value or "")
+                    if normalized_sheet_dn != dn_number:
+                        search_details: dict[str, Any] = {
+                            "sheet": gs_sheet_name,
+                            "row": gs_row_index,
+                            "column": status_column_position,
+                            "column_name": "status_delivery",
+                            "current_dn_number": dn_cell_value,
+                            "expected_dn_number": dn_number,
+                            "error": "dn_number mismatch for target row",
+                            "new_value": delivery_status_value,
+                        }
+                        try:
+                            dn_column_values = worksheet.col_values(dn_column_position)
+                        except Exception as search_exc:
+                            search_details["search_error"] = str(search_exc)
+                            gspread_dry_run = search_details
+                        else:
+                            found_row_index: int | None = None
+                            for idx, value in enumerate(dn_column_values, start=1):
+                                if normalize_dn(value or "") == dn_number:
+                                    found_row_index = idx
+                                    break
+
+                            if found_row_index is None:
+                                search_details["search_result"] = "dn_number not found in sheet"
+                                gspread_dry_run = search_details
+                            else:
+                                try:
+                                    cell = worksheet.cell(found_row_index, status_column_position)
+                                except Exception as fetch_exc:
+                                    search_details["search_row"] = found_row_index
+                                    search_details["search_error"] = str(fetch_exc)
+                                    gspread_dry_run = search_details
+                                else:
+                                    gspread_dry_run = {
+                                        "sheet": gs_sheet_name,
+                                        "row": found_row_index,
+                                        "column": status_column_position,
+                                        "column_name": "status_delivery",
+                                        "current_value": cell.value,
+                                        "new_value": delivery_status_value,
+                                        "found_via_search": True,
+                                        "original_row_mismatch": gs_row_index,
+                                    }
+                    else:
+                        cell = worksheet.cell(gs_row_index, status_column_position)
+                        gspread_dry_run = {
+                            "sheet": gs_sheet_name,
+                            "row": gs_row_index,
+                            "column": status_column_position,
+                            "column_name": "status_delivery",
+                            "current_value": cell.value,
+                            "new_value": delivery_status_value,
+                        }
+                except Exception as exc:
+                    gspread_dry_run = {
+                        "sheet": gs_sheet_name,
+                        "row": gs_row_index,
+                        "column": status_column_position,
+                        "column_name": "status_delivery",
+                        "error": str(exc),
+                        "new_value": delivery_status_value,
+                    }
+
+    response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}
+    if gspread_dry_run is not None:
+        response["delivery_status_dry_run"] = gspread_dry_run
+
+    return response
 
 
 @app.post("/api/dn/batch_update")
