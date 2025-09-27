@@ -5,7 +5,7 @@ import json
 from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence, Literal
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, func, or_
 from .models import DU, DURecord, DN, DNRecord, DNSyncLog, Vehicle
 from .dn_columns import filter_assignable_dn_fields
 
@@ -544,18 +544,31 @@ def list_dn_by_dn_numbers(
     if not numbers:
         return 0, []
 
-    base_q = db.query(DN).filter(DN.dn_number.in_(numbers))
+    latest_record_subq = (
+        db.query(
+            DNRecord.dn_number.label("dn_number"),
+            func.max(DNRecord.created_at).label("latest_record_created_at"),
+        )
+        .group_by(DNRecord.dn_number)
+        .subquery()
+    )
+
+    base_q = (
+        db.query(DN)
+        .outerjoin(
+            latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
+        )
+        .filter(DN.dn_number.in_(numbers))
+    )
 
     total = base_q.count()
 
-    ordering = case(
-        *[(number, index) for index, number in enumerate(numbers)],
-        value=DN.dn_number,
-        else_=len(numbers),
+    latest_record_expr = func.coalesce(
+        latest_record_subq.c.latest_record_created_at, DN.created_at
     )
 
     items = (
-        base_q.order_by(ordering)
+        base_q.order_by(latest_record_expr.desc(), DN.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
@@ -631,7 +644,25 @@ def search_dn_list(
     page: int = 1,
     page_size: int = 20,
 ) -> Tuple[int, List[DN]]:
-    base_q = db.query(DN)
+    latest_record_subq = (
+        db.query(
+            DNRecord.dn_number.label("dn_number"),
+            func.max(DNRecord.created_at).label("latest_record_created_at"),
+        )
+        .group_by(DNRecord.dn_number)
+        .subquery()
+    )
+
+    base_q = (
+        db.query(DN)
+        .outerjoin(
+            latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
+        )
+    )
+    latest_record_expr = func.coalesce(
+        latest_record_subq.c.latest_record_created_at, DN.created_at
+    )
+    last_modified_expr = func.greatest(DN.created_at, latest_record_expr)
     conds = []
 
     trimmed_plan_mos_dates = [
@@ -726,35 +757,17 @@ def search_dn_list(
     if project_request:
         conds.append(DN.project_request == project_request)
 
-    if last_modified_from is not None or last_modified_to is not None:
-        latest_record_subq = (
-            db.query(
-                DNRecord.dn_number.label("dn_number"),
-                func.max(DNRecord.created_at).label("latest_record_created_at"),
-            )
-            .group_by(DNRecord.dn_number)
-            .subquery()
-        )
-        base_q = base_q.outerjoin(
-            latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
-        )
-        last_modified_expr = func.greatest(
-            DN.created_at,
-            func.coalesce(
-                latest_record_subq.c.latest_record_created_at, DN.created_at
-            ),
-        )
-        if last_modified_from is not None:
-            conds.append(last_modified_expr >= last_modified_from)
-        if last_modified_to is not None:
-            conds.append(last_modified_expr <= last_modified_to)
+    if last_modified_from is not None:
+        conds.append(last_modified_expr >= last_modified_from)
+    if last_modified_to is not None:
+        conds.append(last_modified_expr <= last_modified_to)
 
     if conds:
         base_q = base_q.filter(and_(*conds))
 
     total = base_q.count()
     items = (
-        base_q.order_by(DN.created_at.desc(), DN.id.desc())
+        base_q.order_by(latest_record_expr.desc(), DN.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
