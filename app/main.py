@@ -1072,7 +1072,9 @@ def search_dn_records_api(
     date_from: Optional[datetime] = Query(None, description="起始时间(ISO 8601)"),
     date_to: Optional[datetime] = Query(None, description="结束时间(ISO 8601)"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: Optional[int] = Query(
+        None, ge=1, description="每页数量，缺省时返回全部符合条件的数据"
+    ),
     db: Session = Depends(get_db),
 ):
     if dn_number:
@@ -1101,7 +1103,7 @@ def search_dn_records_api(
         "ok": True,
         "total": total,
         "page": page,
-        "page_size": page_size,
+        "page_size": page_size if page_size is not None else len(items),
         "items": [
             {
                 "id": it.id,

@@ -428,7 +428,7 @@ def search_dn_records(
     date_from=None,
     date_to=None,
     page: int = 1,
-    page_size: int = 20,
+    page_size: Optional[int] = None,
 ) -> Tuple[int, List[DNRecord]]:
     base_q = db.query(DNRecord)
     conds = []
@@ -452,12 +452,11 @@ def search_dn_records(
         base_q = base_q.filter(and_(*conds))
 
     total = base_q.count()
-    items = (
-        base_q.order_by(DNRecord.created_at.desc(), DNRecord.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    ordered_q = base_q.order_by(DNRecord.created_at.desc(), DNRecord.id.desc())
+    if page_size is None:
+        items = ordered_q.all()
+    else:
+        items = ordered_q.offset((page - 1) * page_size).limit(page_size).all()
     return total, items
 
 
