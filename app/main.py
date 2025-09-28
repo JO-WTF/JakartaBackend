@@ -71,6 +71,9 @@ from .logging_utils import logger
 os.makedirs(settings.storage_disk_path, exist_ok=True)
 app = FastAPI(title="DU Backend API", version="1.1.0")
 
+API_KEY = settings.google_api_key
+SPREADSHEET_URL = settings.google_spreadsheet_url
+
 GS_KEY_PATH = Path("/etc/secrets/gskey.json")
 try:
     gs_key_content = GS_KEY_PATH.read_text(encoding="utf-8")
@@ -1457,11 +1460,6 @@ def remove_dn_record(id: int, db: Session = Depends(get_db)):
     if not ok:
         raise HTTPException(status_code=404, detail="Record not found")
     return {"ok": True}
-
-
-# 设置全局变量
-API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
 
 
 ARCHIVE_TEXT_COLOR = {"red": 0.6, "green": 0.6, "blue": 0.6}
