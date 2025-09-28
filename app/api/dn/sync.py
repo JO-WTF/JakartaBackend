@@ -13,13 +13,23 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, List
 
-import gspread
 import pandas as pd
 from fastapi import Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import func, or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
+
+from app.google_sheets import (
+    create_gspread_client,
+    fetch_all_values,
+    fetch_cell,
+    fetch_column_values,
+    get_worksheet,
+    list_worksheets,
+    open_spreadsheet,
+    update_cell_value,
+)
 
 from app.crud import (
     ensure_dn,
@@ -32,24 +42,11 @@ from app.db import SessionLocal, get_db
 from app.dn_columns import filter_assignable_dn_fields, get_mutable_dn_columns, get_sheet_columns
 from app.logging_utils import logger
 from app.models import DN
-from app.settings import settings
 from app.time_utils import TZ_GMT7, to_gmt7_iso
 
 from ..common import normalize_dn
 from .router import router
 from .schemas import ArchiveMarkRequest
-
-API_KEY = settings.google_api_key
-SPREADSHEET_URL = settings.google_spreadsheet_url
-
-GS_KEY_PATH = Path("/etc/secrets/gskey.json")
-try:
-    gs_key_content = GS_KEY_PATH.read_text(encoding="utf-8")
-    logger.info("Loaded gskey.json content: %s", gs_key_content)
-except FileNotFoundError:
-    logger.debug("gskey.json not found at %s, skipping", GS_KEY_PATH)
-except Exception as exc:
-    logger.debug("Failed to read gskey.json from %s: %s", GS_KEY_PATH, exc)
 
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -87,28 +84,6 @@ dn_sync_logger = _configure_dn_sync_logger(logger)
 
 SHEET_SYNC_INTERVAL_SECONDS = 300
 
-
-def create_gspread_client() -> gspread.Client:
-    """Create a gspread client using service account when available."""
-
-    try:
-        logger.debug(
-            "Attempting to create gspread client using service account file at %s",
-            GS_KEY_PATH,
-        )
-        gc = gspread.service_account(filename=str(GS_KEY_PATH))
-        logger.info("Using gspread service account authentication")
-        return gc
-    except Exception as exc:
-        logger.warning(
-            "Failed to authenticate using service account at %s: %s. Falling back to API key.",
-            GS_KEY_PATH,
-            exc,
-        )
-        gc = gspread.api_key(API_KEY)
-        logger.info("Using gspread API key authentication")
-        return gc
-
 def sync_delivery_status_to_sheet(
     sheet_name: str,
     row_index: int,
@@ -143,9 +118,9 @@ def sync_delivery_status_to_sheet(
 
     try:
         gc = create_gspread_client()
-        sh = gc.open_by_url(SPREADSHEET_URL)
-        worksheet = sh.worksheet(sheet_name)
-        dn_cell_value = worksheet.cell(row_index, dn_column_position).value
+        spreadsheet = open_spreadsheet(gc)
+        worksheet = get_worksheet(spreadsheet, sheet_name)
+        dn_cell_value = fetch_cell(worksheet, row_index, dn_column_position).value
         normalized_sheet_dn = normalize_dn(dn_cell_value or "")
 
         if normalized_sheet_dn != dn_number:
@@ -160,7 +135,7 @@ def sync_delivery_status_to_sheet(
                 "new_value": new_value,
             }
             try:
-                dn_column_values = worksheet.col_values(dn_column_position)
+                dn_column_values = fetch_column_values(worksheet, dn_column_position)
             except Exception as search_exc:
                 search_details["search_error"] = str(search_exc)
                 return search_details
@@ -176,7 +151,7 @@ def sync_delivery_status_to_sheet(
                 return search_details
 
             try:
-                cell = worksheet.cell(found_row_index, status_column_position)
+                cell = fetch_cell(worksheet, found_row_index, status_column_position)
             except Exception as fetch_exc:
                 search_details["search_row"] = found_row_index
                 search_details["search_error"] = str(fetch_exc)
@@ -200,7 +175,7 @@ def sync_delivery_status_to_sheet(
                 return update_details
 
             try:
-                worksheet.update_cell(found_row_index, status_column_position, new_value)
+                update_cell_value(worksheet, found_row_index, status_column_position, new_value)
             except Exception as update_exc:
                 update_details["update_error"] = str(update_exc)
                 return update_details
@@ -209,7 +184,7 @@ def sync_delivery_status_to_sheet(
             return update_details
 
         try:
-            cell = worksheet.cell(row_index, status_column_position)
+            cell = fetch_cell(worksheet, row_index, status_column_position)
         except Exception as fetch_exc:
             return {
                 "sheet": sheet_name,
@@ -235,7 +210,7 @@ def sync_delivery_status_to_sheet(
             update_details["normalized_current_value"] = normalized_current_value
             return update_details
         try:
-            worksheet.update_cell(row_index, status_column_position, new_value)
+            update_cell_value(worksheet, row_index, status_column_position, new_value)
         except Exception as update_exc:
             update_details["update_error"] = str(update_exc)
             return update_details
@@ -286,8 +261,8 @@ def mark_plan_mos_rows_for_archiving(
     )
 
     gc = create_gspread_client()
-    sh = gc.open_by_url(SPREADSHEET_URL)
-    plan_sheets = fetch_plan_sheets(sh)
+    spreadsheet = open_spreadsheet(gc)
+    plan_sheets = fetch_plan_sheets(spreadsheet)
     sheet_titles = [sheet.title for sheet in plan_sheets]
 
     matched_rows = 0
@@ -295,7 +270,7 @@ def mark_plan_mos_rows_for_archiving(
     affected_rows: List[dict[str, Any]] = []
 
     for sheet in plan_sheets:
-        data = sheet.get_all_values()
+        data = fetch_all_values(sheet)
         for idx, row in enumerate(data, start=1):
             if idx <= 3:
                 continue
@@ -316,10 +291,10 @@ def mark_plan_mos_rows_for_archiving(
 
             if row_date <= threshold_date:
                 matched_rows += 1
-                cell_value = sheet.cell(idx, status_delivery_index + 1).value
+                cell_value = fetch_cell(sheet, idx, status_delivery_index + 1).value
                 normalized_cell_value = (cell_value or "").strip().upper()
                 if normalized_cell_value != "ARCHIVED":
-                    sheet.update_cell(idx, status_delivery_index + 1, "ARCHIVED")
+                    update_cell_value(sheet, idx, status_delivery_index + 1, "ARCHIVED")
                     formatted_rows += 1
                     affected_rows.append(
                         {
@@ -375,10 +350,10 @@ DATE_FORMATS = [
 ]
 
 
-def fetch_plan_sheets(sheet_url):
+def fetch_plan_sheets(spreadsheet):
     """获取以 'Plan MOS' 开头的所有工作表"""
     start = perf_counter()
-    sheets = sheet_url.worksheets()
+    sheets = list(list_worksheets(spreadsheet))
     dn_sync_logger.debug(
         "Fetched %d worksheets in %.3fs",
         len(sheets),
@@ -493,7 +468,7 @@ def normalize_database_fields(db: Session) -> None:
 def process_sheet_data(sheet, columns: List[str]) -> pd.DataFrame:
     """处理工作表数据"""
     fetch_start = perf_counter()
-    all_values = sheet.get_all_values()
+    all_values = fetch_all_values(sheet)
     dn_sync_logger.debug(
         "Processing sheet '%s' with %d total rows", sheet.title, len(all_values)
     )
@@ -609,9 +584,9 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         dn_sync_logger.debug(
             "Created gspread client in %.3fs", perf_counter() - client_start
         )
-        dn_sync_logger.debug("Opening spreadsheet URL: %s", SPREADSHEET_URL)
+        dn_sync_logger.debug("Opening spreadsheet using shared helper")
         open_start = perf_counter()
-        sh = gc.open_by_url(SPREADSHEET_URL)
+        sh = open_spreadsheet(gc)
         dn_sync_logger.debug(
             "Spreadsheet opened successfully in %.3fs",
             perf_counter() - open_start,
@@ -1062,7 +1037,7 @@ def download_dn_sync_log():
 @router.get("/stats/{date}")
 async def get_dn_stats(date: str):
     gc = create_gspread_client()
-    sh = gc.open_by_url(SPREADSHEET_URL)
+    sh = open_spreadsheet(gc)
 
     combined_df = process_all_sheets(sh)
 
