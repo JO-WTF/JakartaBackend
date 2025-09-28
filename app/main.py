@@ -997,10 +997,10 @@ def mark_plan_mos_rows_for_archiving(
                             },
                             "cell": {
                                 "userEnteredFormat": {
-                                    "backgroundColor": ARCHIVE_ROW_BACKGROUND_COLOR
+                                    "foregroundColor": ARCHIVE_TEXT_COLOR
                                 }
                             },
-                            "fields": "userEnteredFormat.backgroundColor",
+                            "fields": "userEnteredFormat.textFormat.foregroundColor",
                         }
                     }
                 )
