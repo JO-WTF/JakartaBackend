@@ -929,7 +929,6 @@ def mark_plan_mos_rows_for_archiving(
 
     for sheet in plan_sheets:
         values = sheet.get_all_values()
-        values = ensure_archive_note_column(sheet, values)
         if len(values) <= 3:
             continue
 
