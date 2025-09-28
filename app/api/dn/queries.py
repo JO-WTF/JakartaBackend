@@ -177,7 +177,7 @@ def list_dn_entries(
         if not DU_RE.fullmatch(du_id):
             raise HTTPException(status_code=400, detail=f"Invalid DU ID: {du_id}")
 
-    total, items = list_all_dn_records(
+    total, items = search_dn_list(
         db,
         dn_number=dn_number,
         du_id=du_id,
