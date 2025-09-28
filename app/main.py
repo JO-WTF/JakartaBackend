@@ -983,7 +983,6 @@ def mark_plan_mos_rows_for_archiving(
                 "plan_mos_date": plan_cell,
                 "status_delivery": status_cell,
             }
-
             if effective_color_range_end > 0:
                 pending_requests.append(
                     {
@@ -997,7 +996,9 @@ def mark_plan_mos_rows_for_archiving(
                             },
                             "cell": {
                                 "userEnteredFormat": {
-                                    "foregroundColor": ARCHIVE_TEXT_COLOR
+                                    "textFormat": {
+                                        "foregroundColor": ARCHIVE_TEXT_COLOR
+                                    }
                                 }
                             },
                             "fields": "userEnteredFormat.textFormat.foregroundColor",
