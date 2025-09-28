@@ -12,7 +12,6 @@ from app.crud import (
     delete_dn,
     delete_dn_record,
     ensure_dn,
-    ensure_du,
     get_existing_dn_numbers,
     update_dn_record,
 )
@@ -109,9 +108,6 @@ def update_dn(
         dn_number,
         **ensure_payload,
     )
-    if du_id_normalized:
-        ensure_du(db, du_id_normalized)
-
     rec = add_dn_record(
         db,
         dn_number=dn_number,
