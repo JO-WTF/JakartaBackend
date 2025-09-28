@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     s3_access_key: str = Field(default="", alias="S3_ACCESS_KEY")
     s3_secret_key: str = Field(default="", alias="S3_SECRET_KEY")
     storage_base_url: str = Field(default="", alias="STORAGE_BASE_URL")
-    google_api_key: str = Field(alias="GOOGLE_API_KEY")
+    google_service_account_credentials: str = Field(
+        alias="GOOGLE_SERVICE_ACCOUNT_CREDENTIALS"
+    )
     google_spreadsheet_url: str = Field(alias="GOOGLE_SPREADSHEET_URL")
 
 
@@ -35,7 +37,7 @@ except ValidationError as exc:
     missing_envs = set()
     env_field_aliases = {
         "database_url": "DATABASE_URL",
-        "google_api_key": "GOOGLE_API_KEY",
+        "google_service_account_credentials": "GOOGLE_SERVICE_ACCOUNT_CREDENTIALS",
         "google_spreadsheet_url": "GOOGLE_SPREADSHEET_URL",
     }
     for error in exc.errors():

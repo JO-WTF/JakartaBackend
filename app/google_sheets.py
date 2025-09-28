@@ -2,47 +2,37 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Iterable
+import json
+from typing import Any, Dict, Iterable
 
 import gspread
 
 from app.logging_utils import logger
 from app.settings import settings
 
-API_KEY = settings.google_api_key
 DEFAULT_SPREADSHEET_URL = settings.google_spreadsheet_url
-GS_KEY_PATH = Path("/etc/secrets/gskey.json")
 
-try:
-    gs_key_content = GS_KEY_PATH.read_text(encoding="utf-8")
-    logger.info("Loaded gskey.json content: %s", gs_key_content)
-except FileNotFoundError:
-    logger.debug("gskey.json not found at %s, skipping", GS_KEY_PATH)
-except Exception as exc:  # pragma: no cover - defensive logging
-    logger.debug("Failed to read gskey.json from %s: %s", GS_KEY_PATH, exc)
+
+def _load_service_account_credentials() -> Dict[str, Any]:
+    """Load and parse the service account credentials from settings."""
+
+    raw_credentials = settings.google_service_account_credentials
+    try:
+        credentials = json.loads(raw_credentials)
+    except json.JSONDecodeError as exc:  # pragma: no cover - validated during startup
+        logger.error("Invalid Google service account credentials JSON: %s", exc)
+        raise
+
+    logger.debug("Loaded Google service account credentials from configuration")
+    return credentials
 
 
 def create_gspread_client() -> gspread.Client:
-    """Return a gspread client using service-account credentials when possible."""
+    """Return a gspread client using service-account credentials."""
 
-    try:
-        logger.debug(
-            "Attempting to create gspread client using service account file at %s",
-            GS_KEY_PATH,
-        )
-        client = gspread.service_account(filename=str(GS_KEY_PATH))
-        logger.info("Using gspread service account authentication")
-        return client
-    except Exception as exc:  # pragma: no cover - relies on environment setup
-        logger.warning(
-            "Failed to authenticate using service account at %s: %s. Falling back to API key.",
-            GS_KEY_PATH,
-            exc,
-        )
-        client = gspread.api_key(API_KEY)
-        logger.info("Using gspread API key authentication")
-        return client
+    credentials = _load_service_account_credentials()
+    logger.info("Using gspread service account authentication from configuration")
+    return gspread.service_account_from_dict(credentials)
 
 
 def open_spreadsheet(
@@ -101,9 +91,8 @@ def update_cell_value(
 
 
 __all__ = [
-    "API_KEY",
     "DEFAULT_SPREADSHEET_URL",
-    "GS_KEY_PATH",
+    "_load_service_account_credentials",
     "create_gspread_client",
     "fetch_all_values",
     "fetch_cell",
