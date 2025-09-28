@@ -905,10 +905,6 @@ def mark_plan_mos_rows_for_archiving(
     except ValueError as exc:
         raise RuntimeError("status_delivery column not found in sheet definition") from exc
 
-    archive_col_index = ARCHIVE_MARKER_COLUMN_INDEX - 1
-    if archive_col_index < 0:
-        raise RuntimeError("Invalid archive marker column index")
-
     threshold_date = (datetime.now(TZ_GMT7) - timedelta(days=threshold_days)).date()
     logger.info(
         "Marking rows for archiving where plan_mos_date is before %s and status_delivery is POD",
@@ -921,13 +917,9 @@ def mark_plan_mos_rows_for_archiving(
     sheet_titles = [sheet.title for sheet in plan_sheets]
 
     matched_rows = 0
-    value_updates = 0
-    already_marked = 0
     formatted_rows = 0
     affected_rows: List[dict[str, Any]] = []
     pending_requests: List[dict[str, Any]] = []
-
-    color_range_end = max(len(column_names), ARCHIVE_MARKER_COLUMN_INDEX)
 
     def flush_requests() -> None:
         if not pending_requests:
@@ -939,6 +931,11 @@ def mark_plan_mos_rows_for_archiving(
         values = sheet.get_all_values()
         if len(values) <= 3:
             continue
+
+        sheet_column_count = getattr(sheet, "col_count", None)
+        if not sheet_column_count:
+            sheet_column_count = max((len(row) for row in values), default=0)
+        effective_color_range_end = max(sheet_column_count, 0)
 
         for row_offset, row_values in enumerate(values[3:], start=4):
             if not row_values:
@@ -980,72 +977,38 @@ def mark_plan_mos_rows_for_archiving(
             row_number = row_offset
             row_start_index = row_number - 1
 
-            current_marker = (
-                row_values[archive_col_index] if len(row_values) > archive_col_index else ""
-            )
-            already_has_marker = (
-                isinstance(current_marker, str)
-                and current_marker.strip().lower() == ARCHIVE_MARK_VALUE.lower()
-            )
-
             entry: dict[str, Any] = {
                 "sheet": sheet.title,
                 "row": row_number,
                 "plan_mos_date": plan_cell,
                 "status_delivery": status_cell,
-                "already_marked": already_has_marker,
             }
 
-            if already_has_marker:
-                already_marked += 1
-            else:
-                value_updates += 1
+            if effective_color_range_end > 0:
                 pending_requests.append(
                     {
-                        "updateCells": {
+                        "repeatCell": {
                             "range": {
                                 "sheetId": sheet.id,
                                 "startRowIndex": row_start_index,
                                 "endRowIndex": row_start_index + 1,
-                                "startColumnIndex": archive_col_index,
-                                "endColumnIndex": archive_col_index + 1,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": effective_color_range_end,
                             },
-                            "rows": [
-                                {
-                                    "values": [
-                                        {
-                                            "userEnteredValue": {
-                                                "stringValue": ARCHIVE_MARK_VALUE
-                                            }
-                                        }
-                                    ]
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": ARCHIVE_ROW_BACKGROUND_COLOR
                                 }
-                            ],
-                            "fields": "userEnteredValue",
+                            },
+                            "fields": "userEnteredFormat.backgroundColor",
                         }
                     }
                 )
-
-            pending_requests.append(
-                {
-                    "repeatCell": {
-                        "range": {
-                            "sheetId": sheet.id,
-                            "startRowIndex": row_start_index,
-                            "endRowIndex": row_start_index + 1,
-                            "startColumnIndex": 0,
-                            "endColumnIndex": color_range_end,
-                        },
-                        "cell": {
-                            "userEnteredFormat": {
-                                "textFormat": {"foregroundColor": ARCHIVE_TEXT_COLOR}
-                            }
-                        },
-                        "fields": "userEnteredFormat.textFormat.foregroundColor",
-                    }
-                }
-            )
-            formatted_rows += 1
+                formatted_rows += 1
+                entry["formatted"] = True
+            else:
+                entry["formatted"] = False
+                entry["formatting_skipped"] = True
             affected_rows.append(entry)
 
             # Flush periodically to respect Google Sheets API batch limits.
@@ -1055,18 +1018,15 @@ def mark_plan_mos_rows_for_archiving(
     flush_requests()
 
     logger.info(
-        "Marked %d rows for archiving (value updates=%d, already marked=%d)",
+        "Matched %d rows for archiving criteria; formatted %d rows",
         matched_rows,
-        value_updates,
-        already_marked,
+        formatted_rows,
     )
 
     return {
         "threshold_days": threshold_days,
         "threshold_date": threshold_date.isoformat(),
         "matched_rows": matched_rows,
-        "value_updates": value_updates,
-        "already_marked": already_marked,
         "formatted_rows": formatted_rows,
         "sheets_processed": sheet_titles,
         "affected_rows": affected_rows,
@@ -1502,9 +1462,7 @@ def remove_dn_record(id: int, db: Session = Depends(get_db)):
 API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
 
-ARCHIVE_MARKER_COLUMN_INDEX = 35
-ARCHIVE_MARK_VALUE = "To Archive"
-ARCHIVE_TEXT_COLOR = {"red": 0.6, "green": 0.6, "blue": 0.6}
+ARCHIVE_ROW_BACKGROUND_COLOR = {"red": 0.9, "green": 0.9, "blue": 0.9}
 DEFAULT_ARCHIVE_THRESHOLD_DAYS = 7
 
 MONTH_MAP = {
