@@ -905,10 +905,6 @@ def mark_plan_mos_rows_for_archiving(
     except ValueError as exc:
         raise RuntimeError("status_delivery column not found in sheet definition") from exc
 
-    archive_col_index = ARCHIVE_MARKER_COLUMN_INDEX - 1
-    if archive_col_index < 0:
-        raise RuntimeError("Invalid archive marker column index")
-
     threshold_date = (datetime.now(TZ_GMT7) - timedelta(days=threshold_days)).date()
     logger.info(
         "Marking rows for archiving where plan_mos_date is before %s and status_delivery is POD",
@@ -921,80 +917,9 @@ def mark_plan_mos_rows_for_archiving(
     sheet_titles = [sheet.title for sheet in plan_sheets]
 
     matched_rows = 0
-    value_updates = 0
-    already_marked = 0
     formatted_rows = 0
     affected_rows: List[dict[str, Any]] = []
     pending_requests: List[dict[str, Any]] = []
-
-    color_range_end_base = max(len(column_names), ARCHIVE_MARKER_COLUMN_INDEX)
-
-    archive_header_normalized = ARCHIVE_MARKER_HEADER.strip().lower()
-
-    def ensure_archive_note_column(
-        sheet: gspread.Worksheet, values: list[list[str]]
-    ) -> list[list[str]]:
-        """Ensure the archive note column exists with the expected header."""
-
-        header_row = values[0] if values else []
-        header_value = (
-            header_row[ARCHIVE_MARKER_COLUMN_INDEX - 1]
-            if len(header_row) >= ARCHIVE_MARKER_COLUMN_INDEX
-            else ""
-        )
-
-        if header_value.strip().lower() == archive_header_normalized:
-            return values
-
-        start_index = ARCHIVE_MARKER_COLUMN_INDEX - 1
-        logger.info(
-            "Inserting archive note column at position %d for sheet %s",
-            ARCHIVE_MARKER_COLUMN_INDEX,
-            sheet.title,
-        )
-
-        sh.batch_update(
-            {
-                "requests": [
-                    {
-                        "insertDimension": {
-                            "range": {
-                                "sheetId": sheet.id,
-                                "dimension": "COLUMNS",
-                                "startIndex": start_index,
-                                "endIndex": start_index + 1,
-                            },
-                            "inheritFromBefore": False,
-                        }
-                    },
-                    {
-                        "updateCells": {
-                            "range": {
-                                "sheetId": sheet.id,
-                                "startRowIndex": 0,
-                                "endRowIndex": 1,
-                                "startColumnIndex": start_index,
-                                "endColumnIndex": start_index + 1,
-                            },
-                            "rows": [
-                                {
-                                    "values": [
-                                        {
-                                            "userEnteredValue": {
-                                                "stringValue": ARCHIVE_MARKER_HEADER
-                                            }
-                                        }
-                                    ]
-                                }
-                            ],
-                            "fields": "userEnteredValue",
-                        }
-                    },
-                ]
-            }
-        )
-
-        return sheet.get_all_values()
 
     def flush_requests() -> None:
         if not pending_requests:
@@ -1011,10 +936,7 @@ def mark_plan_mos_rows_for_archiving(
         sheet_column_count = getattr(sheet, "col_count", None)
         if not sheet_column_count:
             sheet_column_count = max((len(row) for row in values), default=0)
-        if sheet_column_count < ARCHIVE_MARKER_COLUMN_INDEX:
-            sheet_column_count = ARCHIVE_MARKER_COLUMN_INDEX
-
-        effective_color_range_end = min(color_range_end_base, sheet_column_count)
+        effective_color_range_end = max(sheet_column_count, 0)
 
         for row_offset, row_values in enumerate(values[3:], start=4):
             if not row_values:
@@ -1056,60 +978,12 @@ def mark_plan_mos_rows_for_archiving(
             row_number = row_offset
             row_start_index = row_number - 1
 
-            current_marker = (
-                row_values[archive_col_index] if len(row_values) > archive_col_index else ""
-            )
-            already_has_marker = (
-                isinstance(current_marker, str)
-                and current_marker.strip().lower() == ARCHIVE_MARK_VALUE.lower()
-            )
-
             entry: dict[str, Any] = {
                 "sheet": sheet.title,
                 "row": row_number,
                 "plan_mos_date": plan_cell,
                 "status_delivery": status_cell,
-                "already_marked": already_has_marker,
             }
-
-            if already_has_marker:
-                already_marked += 1
-            else:
-                if archive_col_index >= sheet_column_count:
-                    logger.warning(
-                        "Sheet %s does not have archive marker column index %d (columns=%d)",
-                        sheet.title,
-                        ARCHIVE_MARKER_COLUMN_INDEX,
-                        sheet_column_count,
-                    )
-                    entry["marker_skipped"] = True
-                else:
-                    value_updates += 1
-                    pending_requests.append(
-                        {
-                            "updateCells": {
-                                "range": {
-                                    "sheetId": sheet.id,
-                                    "startRowIndex": row_start_index,
-                                    "endRowIndex": row_start_index + 1,
-                                    "startColumnIndex": archive_col_index,
-                                    "endColumnIndex": archive_col_index + 1,
-                                },
-                                "rows": [
-                                    {
-                                        "values": [
-                                            {
-                                                "userEnteredValue": {
-                                                    "stringValue": ARCHIVE_MARK_VALUE
-                                                }
-                                            }
-                                        ]
-                                    }
-                                ],
-                                "fields": "userEnteredValue",
-                            }
-                        }
-                    )
 
             if effective_color_range_end > 0:
                 pending_requests.append(
@@ -1124,15 +998,17 @@ def mark_plan_mos_rows_for_archiving(
                             },
                             "cell": {
                                 "userEnteredFormat": {
-                                    "textFormat": {"foregroundColor": ARCHIVE_TEXT_COLOR}
+                                    "backgroundColor": ARCHIVE_ROW_BACKGROUND_COLOR
                                 }
                             },
-                            "fields": "userEnteredFormat.textFormat.foregroundColor",
+                            "fields": "userEnteredFormat.backgroundColor",
                         }
                     }
                 )
                 formatted_rows += 1
+                entry["formatted"] = True
             else:
+                entry["formatted"] = False
                 entry["formatting_skipped"] = True
             affected_rows.append(entry)
 
@@ -1143,18 +1019,15 @@ def mark_plan_mos_rows_for_archiving(
     flush_requests()
 
     logger.info(
-        "Marked %d rows for archiving (value updates=%d, already marked=%d)",
+        "Matched %d rows for archiving criteria; formatted %d rows",
         matched_rows,
-        value_updates,
-        already_marked,
+        formatted_rows,
     )
 
     return {
         "threshold_days": threshold_days,
         "threshold_date": threshold_date.isoformat(),
         "matched_rows": matched_rows,
-        "value_updates": value_updates,
-        "already_marked": already_marked,
         "formatted_rows": formatted_rows,
         "sheets_processed": sheet_titles,
         "affected_rows": affected_rows,
@@ -1590,9 +1463,7 @@ def remove_dn_record(id: int, db: Session = Depends(get_db)):
 API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
 
-ARCHIVE_MARKER_COLUMN_INDEX = 33
-ARCHIVE_MARK_VALUE = "To Archive"
-ARCHIVE_MARKER_HEADER = "Archive Note"
+
 ARCHIVE_TEXT_COLOR = {"red": 0.6, "green": 0.6, "blue": 0.6}
 DEFAULT_ARCHIVE_THRESHOLD_DAYS = 7
 
