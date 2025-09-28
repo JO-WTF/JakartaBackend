@@ -33,7 +33,6 @@ from app.google_sheets import (
 
 from app.crud import (
     ensure_dn,
-    ensure_du,
     get_dn_map_by_numbers,
     get_latest_dn_records_map,
     get_latest_dn_sync_log,
