@@ -929,6 +929,7 @@ def mark_plan_mos_rows_for_archiving(
 
     for sheet in plan_sheets:
         values = sheet.get_all_values()
+        values = ensure_archive_note_column(sheet, values)
         if len(values) <= 3:
             continue
 
@@ -1462,7 +1463,8 @@ def remove_dn_record(id: int, db: Session = Depends(get_db)):
 API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
 
-ARCHIVE_ROW_BACKGROUND_COLOR = {"red": 0.9, "green": 0.9, "blue": 0.9}
+
+ARCHIVE_TEXT_COLOR = {"red": 0.6, "green": 0.6, "blue": 0.6}
 DEFAULT_ARCHIVE_THRESHOLD_DAYS = 7
 
 MONTH_MAP = {
