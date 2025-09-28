@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Any
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone, time
+from datetime import datetime, timedelta, timezone, time, date
 from time import perf_counter
 import asyncio
 import re, os, unicodedata
@@ -257,6 +257,18 @@ class VehicleSigninRequest(BaseModel):
 class VehicleDepartRequest(BaseModel):
     vehicle_plate: str = Field(..., alias="vehiclePlate")
     depart_time: datetime | None = Field(None, alias="departTime")
+
+    class Config:
+        populate_by_name = True
+
+
+class ArchiveMarkRequest(BaseModel):
+    threshold_days: int = Field(
+        7,
+        alias="thresholdDays",
+        ge=0,
+        description="Number of days before today that Plan MOS rows must precede to be archived.",
+    )
 
     class Config:
         populate_by_name = True
@@ -870,6 +882,221 @@ def sync_delivery_status_to_sheet(
     return None
 
 
+def mark_plan_mos_rows_for_archiving(
+    threshold_days: int | None = None,
+) -> dict[str, Any]:
+    """Mark outdated POD deliveries for archiving in Google Sheets."""
+
+    if threshold_days is None:
+        threshold_days = DEFAULT_ARCHIVE_THRESHOLD_DAYS
+
+    if threshold_days < 0:
+        raise ValueError("threshold_days must be non-negative")
+
+    column_names = get_sheet_columns()
+
+    try:
+        plan_mos_index = column_names.index("plan_mos_date")
+    except ValueError as exc:
+        raise RuntimeError("plan_mos_date column not found in sheet definition") from exc
+
+    try:
+        status_delivery_index = column_names.index("status_delivery")
+    except ValueError as exc:
+        raise RuntimeError("status_delivery column not found in sheet definition") from exc
+
+    archive_col_index = ARCHIVE_MARKER_COLUMN_INDEX - 1
+    if archive_col_index < 0:
+        raise RuntimeError("Invalid archive marker column index")
+
+    threshold_date = (datetime.now(TZ_GMT7) - timedelta(days=threshold_days)).date()
+    logger.info(
+        "Marking rows for archiving where plan_mos_date is before %s and status_delivery is POD",
+        threshold_date.isoformat(),
+    )
+
+    gc = create_gspread_client()
+    sh = gc.open_by_url(SPREADSHEET_URL)
+    plan_sheets = fetch_plan_sheets(sh)
+    sheet_titles = [sheet.title for sheet in plan_sheets]
+
+    matched_rows = 0
+    value_updates = 0
+    already_marked = 0
+    formatted_rows = 0
+    affected_rows: List[dict[str, Any]] = []
+    pending_requests: List[dict[str, Any]] = []
+
+    color_range_end = max(len(column_names), ARCHIVE_MARKER_COLUMN_INDEX)
+
+    def flush_requests() -> None:
+        if not pending_requests:
+            return
+        sh.batch_update({"requests": list(pending_requests)})
+        pending_requests.clear()
+
+    for sheet in plan_sheets:
+        values = sheet.get_all_values()
+        if len(values) <= 3:
+            continue
+
+        for row_offset, row_values in enumerate(values[3:], start=4):
+            if not row_values:
+                continue
+
+            # Skip rows without meaningful content to avoid touching empty tails.
+            if not any((cell or "").strip() for cell in row_values):
+                continue
+
+            plan_cell = row_values[plan_mos_index] if len(row_values) > plan_mos_index else ""
+            status_cell = row_values[status_delivery_index] if len(row_values) > status_delivery_index else ""
+
+            if not plan_cell:
+                continue
+
+            parsed_plan = parse_date(plan_cell)
+            plan_date_value: date | None = None
+            if isinstance(parsed_plan, datetime):
+                plan_date_value = parsed_plan.date()
+            else:
+                try:
+                    pandas_date = pd.to_datetime(plan_cell, errors="coerce")
+                except Exception:
+                    pandas_date = None
+                if pandas_date is not None and not pd.isna(pandas_date):
+                    plan_date_value = pandas_date.date()
+
+            if plan_date_value is None:
+                continue
+
+            if plan_date_value >= threshold_date:
+                continue
+
+            normalized_status = (status_cell or "").strip().upper()
+            if normalized_status != "POD":
+                continue
+
+            matched_rows += 1
+            row_number = row_offset
+            row_start_index = row_number - 1
+
+            current_marker = (
+                row_values[archive_col_index] if len(row_values) > archive_col_index else ""
+            )
+            already_has_marker = (
+                isinstance(current_marker, str)
+                and current_marker.strip().lower() == ARCHIVE_MARK_VALUE.lower()
+            )
+
+            entry: dict[str, Any] = {
+                "sheet": sheet.title,
+                "row": row_number,
+                "plan_mos_date": plan_cell,
+                "status_delivery": status_cell,
+                "already_marked": already_has_marker,
+            }
+
+            if already_has_marker:
+                already_marked += 1
+            else:
+                value_updates += 1
+                pending_requests.append(
+                    {
+                        "updateCells": {
+                            "range": {
+                                "sheetId": sheet.id,
+                                "startRowIndex": row_start_index,
+                                "endRowIndex": row_start_index + 1,
+                                "startColumnIndex": archive_col_index,
+                                "endColumnIndex": archive_col_index + 1,
+                            },
+                            "rows": [
+                                {
+                                    "values": [
+                                        {
+                                            "userEnteredValue": {
+                                                "stringValue": ARCHIVE_MARK_VALUE
+                                            }
+                                        }
+                                    ]
+                                }
+                            ],
+                            "fields": "userEnteredValue",
+                        }
+                    }
+                )
+
+            pending_requests.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet.id,
+                            "startRowIndex": row_start_index,
+                            "endRowIndex": row_start_index + 1,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": color_range_end,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "textFormat": {"foregroundColor": ARCHIVE_TEXT_COLOR}
+                            }
+                        },
+                        "fields": "userEnteredFormat.textFormat.foregroundColor",
+                    }
+                }
+            )
+            formatted_rows += 1
+            affected_rows.append(entry)
+
+            # Flush periodically to respect Google Sheets API batch limits.
+            if len(pending_requests) >= 90:
+                flush_requests()
+
+    flush_requests()
+
+    logger.info(
+        "Marked %d rows for archiving (value updates=%d, already marked=%d)",
+        matched_rows,
+        value_updates,
+        already_marked,
+    )
+
+    return {
+        "threshold_days": threshold_days,
+        "threshold_date": threshold_date.isoformat(),
+        "matched_rows": matched_rows,
+        "value_updates": value_updates,
+        "already_marked": already_marked,
+        "formatted_rows": formatted_rows,
+        "sheets_processed": sheet_titles,
+        "affected_rows": affected_rows,
+    }
+
+
+@app.post("/api/dn/archive/mark")
+def mark_archive_rows_api(
+    payload: ArchiveMarkRequest | None = Body(
+        None,
+        description="Optional configuration for Plan MOS archiving.",
+    )
+):
+    threshold_days = (
+        payload.threshold_days if payload is not None else DEFAULT_ARCHIVE_THRESHOLD_DAYS
+    )
+
+    try:
+        result = mark_plan_mos_rows_for_archiving(threshold_days=threshold_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Failed to mark rows for archiving: %s", exc)
+        raise HTTPException(status_code=500, detail="failed_to_mark_archive_rows")
+
+    return {"ok": True, "data": result}
+
+
 @app.post("/api/dn/update")
 def update_dn(
     dnNumber: str = Form(...),
@@ -1274,6 +1501,11 @@ def remove_dn_record(id: int, db: Session = Depends(get_db)):
 # 设置全局变量
 API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
+
+ARCHIVE_MARKER_COLUMN_INDEX = 35
+ARCHIVE_MARK_VALUE = "To Archive"
+ARCHIVE_TEXT_COLOR = {"red": 0.6, "green": 0.6, "blue": 0.6}
+DEFAULT_ARCHIVE_THRESHOLD_DAYS = 7
 
 MONTH_MAP = {
     "Sept": "Sep",  # 'Sept' -> 'Sep'
