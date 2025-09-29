@@ -234,6 +234,9 @@ def list_dn_entries(
 def search_dn_list_endpoint(
     dn_number: Optional[str] = Query(None, description="精确 DN number"),
     du_id: Optional[str] = Query(None, description="关联 DU ID"),
+    status_not_empty: Optional[bool] = Query(
+        None, description="根据状态是否为空过滤 (true=非空, false=为空)"
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -251,6 +254,7 @@ def search_dn_list_endpoint(
         db,
         dn_number=dn_number,
         du_id=du_id,
+        status_not_empty=status_not_empty,
         page=page,
         page_size=page_size,
     )
