@@ -717,3 +717,43 @@ def get_dn_status_delivery_counts(
     )
 
     return [(row.status_delivery, int(row.count)) for row in rows]
+
+
+def get_dn_status_delivery_lsp_counts(
+    db: Session,
+    *,
+    lsp: Optional[str] = None,
+    plan_mos_date: Optional[str] = None,
+) -> List[tuple[str, int, int]]:
+    """Return DN counts grouped by LSP with totals and non-empty status counts."""
+
+    lsp_expr = func.coalesce(func.nullif(func.trim(DN.lsp), ""), "NO LSP")
+    trimmed_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
+    trimmed_lsp = lsp.strip() if lsp else None
+
+    query = db.query(
+        lsp_expr.label("lsp"),
+        func.count(DN.id).label("total_count"),
+        func.count(func.nullif(func.trim(DN.status), "")).label("status_not_empty_count"),
+    )
+
+    if trimmed_plan_mos_date:
+        query = query.filter(func.trim(DN.plan_mos_date) == trimmed_plan_mos_date)
+
+    if trimmed_lsp:
+        query = query.filter(func.trim(DN.lsp) == trimmed_lsp)
+
+    rows = (
+        query.group_by(lsp_expr)
+        .order_by(lsp_expr.asc())
+        .all()
+    )
+
+    return [
+        (
+            row.lsp,
+            int(row.total_count),
+            int(row.status_not_empty_count),
+        )
+        for row in rows
+    ]

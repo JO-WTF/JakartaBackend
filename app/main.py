@@ -49,6 +49,7 @@ from .crud import (
     ensure_dn,
     get_dn_map_by_numbers,
     get_dn_status_delivery_counts,
+    get_dn_status_delivery_lsp_counts,
     get_dn_unique_field_values,
     get_existing_dn_numbers,
     get_latest_dn_records_map,
@@ -1612,11 +1613,26 @@ def get_dn_status_delivery_stats(
     normalized_lsp = lsp.strip() if lsp else None
     normalized_plan_mos_date = (plan_mos_date.strip() if plan_mos_date else None) or datetime.now().strftime("%d %b %y")
 
-    stats = get_dn_status_delivery_counts(db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date)
+    stats = get_dn_status_delivery_counts(
+        db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
+    )
     total = sum(count for _, count in stats)
 
     data = [{"status_delivery": status, "count": count} for status, count in stats]
-    return {"ok": True, "data": data, "total": total}
+
+    lsp_stats = get_dn_status_delivery_lsp_counts(
+        db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
+    )
+    lsp_summary = [
+        {
+            "lsp": lsp_value,
+            "total_dn": total_count,
+            "status_not_empty": status_count,
+        }
+        for lsp_value, total_count, status_count in lsp_stats
+    ]
+
+    return {"ok": True, "data": data, "total": total, "lsp_summary": lsp_summary}
 
 
 
