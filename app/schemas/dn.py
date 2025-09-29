@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ __all__ = [
     "StatusDeliveryCount",
     "StatusDeliveryLspSummary",
     "StatusDeliveryStatsResponse",
+    "StatusDeliveryLspSummaryRecord",
+    "StatusDeliveryLspSummaryHistoryResponse",
 ]
 
 
@@ -52,4 +55,24 @@ class StatusDeliveryStatsResponse(BaseModel):
     total: int = Field(..., ge=0, description="Total DN rows matching the filters")
     lsp_summary: List[StatusDeliveryLspSummary] = Field(
         ..., description="Aggregated LSP summary metrics"
+    )
+
+
+class StatusDeliveryLspSummaryRecord(BaseModel):
+    id: int = Field(..., description="Identifier of the recorded summary row")
+    lsp: str = Field(..., description="Logistics service provider name")
+    total_dn: int = Field(..., ge=0, description="Total DN rows counted in the snapshot")
+    status_not_empty: int = Field(
+        ..., ge=0, description="Rows within the snapshot whose status column is not empty"
+    )
+    plan_mos_date: str = Field(..., description="Plan MOS date used when generating the snapshot")
+    recorded_at: datetime = Field(
+        ..., description="Timestamp when the snapshot was captured"
+    )
+
+
+class StatusDeliveryLspSummaryHistoryResponse(BaseModel):
+    ok: bool = Field(True, description="Whether the request succeeded")
+    data: List[StatusDeliveryLspSummaryRecord] = Field(
+        ..., description="Historical status-delivery LSP summary snapshots"
     )

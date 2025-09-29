@@ -1,5 +1,7 @@
 import os
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -11,9 +13,11 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from app.crud import (  # noqa: E402
     get_dn_status_delivery_counts,
     get_dn_status_delivery_lsp_counts,
+    list_status_delivery_lsp_stats,
+    upsert_status_delivery_lsp_stats,
 )
 from app.db import Base  # noqa: E402
-from app.models import DN  # noqa: E402
+from app.models import DN, StatusDeliveryLspStat  # noqa: E402
 
 
 @pytest.fixture
@@ -146,3 +150,136 @@ def test_status_delivery_stats_response_format(db_session):
             {"lsp": "NO LSP", "total_dn": 1, "status_not_empty": 0},
         ],
     }
+
+
+def test_upsert_and_list_lsp_summary_stats(db_session):
+    recorded_at = datetime(2025, 1, 1, 10, tzinfo=timezone.utc)
+
+    upsert_status_delivery_lsp_stats(
+        db_session,
+        [
+            {
+                "lsp": "Alpha",
+                "total_dn": 5,
+                "status_not_empty": 3,
+                "plan_mos_date": "01 Jan 25",
+                "recorded_at": recorded_at,
+            },
+            {
+                "lsp": "Beta",
+                "total_dn": 2,
+                "status_not_empty": 1,
+                "plan_mos_date": "01 Jan 25",
+                "recorded_at": recorded_at,
+            },
+        ],
+    )
+
+    # Update existing Alpha snapshot
+    upsert_status_delivery_lsp_stats(
+        db_session,
+        [
+            {
+                "lsp": "Alpha",
+                "total_dn": 6,
+                "status_not_empty": 4,
+                "plan_mos_date": "01 Jan 25",
+                "recorded_at": recorded_at,
+            }
+        ],
+    )
+
+    records = list_status_delivery_lsp_stats(db_session)
+    assert [(row.lsp, row.total_dn, row.status_not_empty) for row in records] == [
+        ("Alpha", 6, 4),
+        ("Beta", 2, 1),
+    ]
+
+    alpha_only = list_status_delivery_lsp_stats(db_session, lsp=" Alpha ")
+    assert [(row.lsp, row.total_dn, row.status_not_empty) for row in alpha_only] == [
+        ("Alpha", 6, 4)
+    ]
+
+
+def test_get_status_delivery_lsp_summary_records(db_session):
+    from app.api.dn.stats import get_status_delivery_lsp_summary_records
+
+    recorded_at = datetime(2025, 1, 1, 8, tzinfo=timezone.utc)
+
+    upsert_status_delivery_lsp_stats(
+        db_session,
+        [
+            {
+                "lsp": "Alpha",
+                "total_dn": 4,
+                "status_not_empty": 2,
+                "plan_mos_date": "01 Jan 25",
+                "recorded_at": recorded_at,
+            },
+            {
+                "lsp": "NO LSP",
+                "total_dn": 1,
+                "status_not_empty": 0,
+                "plan_mos_date": "01 Jan 25",
+                "recorded_at": recorded_at,
+            },
+        ],
+    )
+
+    response = get_status_delivery_lsp_summary_records(
+        lsp="Alpha", limit=10, db=db_session
+    )
+    assert len(response.data) == 1
+    record = response.data[0]
+    assert record.lsp == "Alpha"
+    assert record.total_dn == 4
+    assert record.status_not_empty == 2
+    assert record.plan_mos_date == "01 Jan 25"
+    assert record.recorded_at.replace(tzinfo=timezone.utc) == recorded_at
+
+
+def test_capture_status_delivery_lsp_summary(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine("sqlite:///:memory:", future=True)
+    TestingSessionLocal = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, future=True
+    )
+    Base.metadata.create_all(engine)
+
+    session = TestingSessionLocal()
+    try:
+        session.add_all(
+            [
+                DN(
+                    dn_number="DN-1",
+                    lsp="Alpha",
+                    plan_mos_date="01 Jan 25",
+                    status="Delivered",
+                ),
+                DN(
+                    dn_number="DN-2",
+                    lsp="Alpha",
+                    plan_mos_date="01 Jan 25",
+                    status=None,
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    import app.core.status_delivery_summary as summary_module
+
+    monkeypatch.setattr(summary_module, "SessionLocal", TestingSessionLocal)
+
+    records = summary_module.capture_status_delivery_lsp_summary(
+        plan_mos_date="01 Jan 25"
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.lsp == "Alpha"
+    assert record.total_dn == 2
+    assert record.status_not_empty == 1

@@ -1,5 +1,5 @@
 import json
-from sqlalchemy import Column, String, Integer, DateTime, Text
+from sqlalchemy import Column, String, Integer, DateTime, Text, UniqueConstraint
 from sqlalchemy.sql import func
 from .db import Base
 
@@ -107,3 +107,22 @@ class DNSyncLog(Base):
         if isinstance(data, list):
             return data
         return []
+
+
+class StatusDeliveryLspStat(Base):
+    __tablename__ = "status_delivery_lsp_stat"
+    __table_args__ = (
+        UniqueConstraint(
+            "lsp",
+            "recorded_at",
+            name="uq_status_delivery_lsp_stat_lsp_recorded_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    lsp = Column(String(128), nullable=False, index=True)
+    total_dn = Column(Integer, nullable=False)
+    status_not_empty = Column(Integer, nullable=False)
+    plan_mos_date = Column(String(32), nullable=False)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

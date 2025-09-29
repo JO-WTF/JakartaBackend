@@ -6,7 +6,7 @@ from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence, Li
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_
-from .models import DN, DNRecord, DNSyncLog, Vehicle
+from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat
 from .dn_columns import filter_assignable_dn_fields
 
 
@@ -757,3 +757,76 @@ def get_dn_status_delivery_lsp_counts(
         )
         for row in rows
     ]
+
+
+def upsert_status_delivery_lsp_stats(
+    db: Session,
+    records: Sequence[dict[str, Any]],
+) -> list[StatusDeliveryLspStat]:
+    """Create or update hourly LSP summary statistic rows."""
+
+    if not records:
+        return []
+
+    persisted: list[StatusDeliveryLspStat] = []
+    for payload in records:
+        lsp = payload.get("lsp")
+        recorded_at = payload.get("recorded_at")
+        if not lsp or recorded_at is None:
+            continue
+
+        existing = (
+            db.query(StatusDeliveryLspStat)
+            .filter(
+                StatusDeliveryLspStat.lsp == lsp,
+                StatusDeliveryLspStat.recorded_at == recorded_at,
+            )
+            .one_or_none()
+        )
+
+        if existing is None:
+            existing = StatusDeliveryLspStat(**payload)
+        else:
+            existing.total_dn = payload.get("total_dn", existing.total_dn)
+            existing.status_not_empty = payload.get(
+                "status_not_empty", existing.status_not_empty
+            )
+            existing.plan_mos_date = payload.get(
+                "plan_mos_date", existing.plan_mos_date
+            )
+
+        db.add(existing)
+        persisted.append(existing)
+
+    db.commit()
+
+    for record in persisted:
+        db.refresh(record)
+
+    return persisted
+
+
+def list_status_delivery_lsp_stats(
+    db: Session,
+    *,
+    lsp: Optional[str] = None,
+    limit: int = 100,
+) -> list[StatusDeliveryLspStat]:
+    """Return stored LSP summary statistics ordered by newest first."""
+
+    query = db.query(StatusDeliveryLspStat)
+
+    trimmed_lsp = lsp.strip() if isinstance(lsp, str) else None
+    if trimmed_lsp:
+        query = query.filter(StatusDeliveryLspStat.lsp == trimmed_lsp)
+
+    limit = max(1, min(int(limit or 1), 1000))
+
+    return (
+        query.order_by(
+            StatusDeliveryLspStat.recorded_at.desc(),
+            StatusDeliveryLspStat.lsp.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
