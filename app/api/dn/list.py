@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -13,11 +13,46 @@ from app.crud import get_latest_dn_records_map, list_all_dn_records, list_dn_by_
 from app.db import get_db
 from app.dn_columns import get_sheet_columns
 from app.models import DN
-from app.utils.query import collect_query_values, normalize_batch_dn_numbers
+from app.utils.query import normalize_batch_dn_numbers
 from app.utils.string import normalize_dn
 from app.utils.time import parse_gmt7_date_range, to_gmt7_iso
 
 router = APIRouter(prefix="/api/dn")
+
+
+def _collect_query_values(*values: Any) -> list[str] | None:
+    """Collect query parameter values supporting repeated parameters and comma-separated values.
+
+    Matches the legacy main branch implementation to preserve behaviour.
+    """
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    def _add_candidate(candidate: Any) -> None:
+        if not isinstance(candidate, str):
+            return
+        parts = candidate.split(",") if "," in candidate else [candidate]
+        for part in parts:
+            trimmed = part.strip()
+            if trimmed and trimmed not in seen:
+                seen.add(trimmed)
+                normalized.append(trimmed)
+
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            _add_candidate(value)
+            continue
+        try:
+            iterator: Iterable[Any] = iter(value)  # type: ignore[arg-type]
+        except TypeError:
+            continue
+        for candidate in iterator:
+            _add_candidate(candidate)
+
+    return normalized or None
 
 
 @router.get("/list")
@@ -85,13 +120,13 @@ def search_dn_list_api(
     if dn_number and not DN_RE.fullmatch(dn_number):
         raise HTTPException(status_code=400, detail="Invalid DN number")
 
-    plan_mos_dates = collect_query_values(date)
-    status_delivery_values = collect_query_values(status_delivery, status_delivery_legacy)
-    status_values = collect_query_values(status_values_param)
-    lsp_values = collect_query_values(lsp)
-    region_values = collect_query_values(region)
-    status_wh_values = collect_query_values(status_wh)
-    subcon_values = collect_query_values(subcon)
+    plan_mos_dates = _collect_query_values(date)
+    status_delivery_values = _collect_query_values(status_delivery, status_delivery_legacy)
+    status_values = _collect_query_values(status_values_param)
+    lsp_values = _collect_query_values(lsp)
+    region_values = _collect_query_values(region)
+    status_wh_values = _collect_query_values(status_wh)
+    subcon_values = _collect_query_values(subcon)
     area_value = area.strip() if area else None
     project_value = project.strip() if project else None
     modified_from, modified_to = parse_gmt7_date_range(date_from, date_to)
