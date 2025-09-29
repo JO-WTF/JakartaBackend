@@ -76,6 +76,7 @@ def _load_service_account_info() -> dict[str, Any]:
 
     raw_credentials = settings.google_service_account_credentials
     source_desc = "environment variable GOOGLE_SERVICE_ACCOUNT_CREDENTIALS"
+    credentials_from_env = bool(raw_credentials)
 
     if not raw_credentials:
         source_desc = f"file {GS_KEY_PATH}"
@@ -97,6 +98,11 @@ def _load_service_account_info() -> dict[str, Any]:
     try:
         info = json.loads(raw_credentials)
     except json.JSONDecodeError as exc:
+        if credentials_from_env:
+            logger.error(
+                "Invalid JSON for GOOGLE_SERVICE_ACCOUNT_CREDENTIALS: %s",
+                raw_credentials,
+            )
         raise RuntimeError("Invalid JSON for Google service account credentials") from exc
 
     _SERVICE_ACCOUNT_INFO = info
