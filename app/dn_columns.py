@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .db import engine
 from .models import DN
-from .logging_utils import logger
+from app.utils.logging import logger
 
 # Base columns defined on the SQLAlchemy model when the application starts.
 _BASE_DN_COLUMNS = tuple(column.name for column in DN.__table__.columns)
