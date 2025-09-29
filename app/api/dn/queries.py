@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -150,10 +150,24 @@ def get_dn_filters(db: Session = Depends(get_db)):
 
 
 @router.get("/status-delivery/stats")
-def get_dn_status_delivery_stats(db: Session = Depends(get_db)):
+def get_dn_status_delivery_stats(
+    lsp: Optional[str] = Query(None, description="LSP 过滤"),
+    plan_mos_date: Optional[str] = Query(
+        None, description="Plan MOS Date 过滤 (格式: 01 Sep 25)"
+    ),
+    db: Session = Depends(get_db),
+):
+    if not plan_mos_date or not plan_mos_date.strip():
+        gmt7_now = datetime.now(timezone(timedelta(hours=7)))
+        plan_mos_date = gmt7_now.strftime("%d %b %y")
+    else:
+        plan_mos_date = plan_mos_date.strip()
+
     stats = [
         {"status_delivery": status, "count": count}
-        for status, count in get_dn_status_delivery_counts(db)
+        for status, count in get_dn_status_delivery_counts(
+            db, lsp=lsp, plan_mos_date=plan_mos_date
+        )
     ]
     total = sum(item["count"] for item in stats)
     return {"ok": True, "data": stats, "total": total}
