@@ -151,8 +151,12 @@ def get_dn_filters(db: Session = Depends(get_db)):
 
 @router.get("/status-delivery/stats")
 def get_dn_status_delivery_stats(db: Session = Depends(get_db)):
-    stats = get_dn_status_delivery_counts(db)
-    return {"ok": True, "data": stats}
+    stats = [
+        {"status_delivery": status, "count": count}
+        for status, count in get_dn_status_delivery_counts(db)
+    ]
+    total = sum(item["count"] for item in stats)
+    return {"ok": True, "data": stats, "total": total}
 
 
 @router.get("/list")
