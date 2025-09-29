@@ -1550,6 +1550,76 @@ def download_dn_sync_log():
     return FileResponse(path=DN_SYNC_LOG_PATH, filename=DN_SYNC_LOG_PATH.name, media_type="text/plain")
 
 
+# ============================== Routes: DN Stats/Filters ==============================
+@app.get("/api/dn/stats/{date}")
+async def get_dn_stats(date: str):
+    gc = create_gspread_client()
+    sh = gc.open_by_url(SPREADSHEET_URL)
+
+    combined_df = process_all_sheets(sh)
+
+    # 安全转换 plan_mos_date → "%d-%b-%y"
+    def _to_strf(x: Any) -> Any:
+        parsed = parse_date(x)
+        return parsed.strftime("%d-%b-%y") if isinstance(parsed, datetime) else x
+
+    combined_df["plan_mos_date"] = combined_df["plan_mos_date"].apply(_to_strf)
+
+    # 过滤日期
+    day_df = combined_df[combined_df["plan_mos_date"] == date]
+    day_df["status_delivery"] = day_df["status_delivery"].apply(lambda x: x.upper() if x else "NO STATUS")
+
+    pivot_df = (
+        day_df.groupby(["plan_mos_date", "region", "status_delivery"])['dn_number'].nunique().unstack(fill_value=0)
+    )
+
+    all_statuses = [
+        "PREPARE VEHICLE", "ON THE WAY", "ON SITE", "POD", "REPLAN MOS PROJECT", "WAITING PIC FEEDBACK",
+        "REPLAN MOS DUE TO LSP DELAY", "CLOSE BY RN", "CANCEL MOS", "NO STATUS"
+    ]
+
+    extra = list(set(pivot_df.columns.tolist()) - set(all_statuses))
+    final_statuses = all_statuses + extra
+
+    pivot_df = pivot_df.reindex(columns=final_statuses, fill_value=0)
+    pivot_df["Total"] = pivot_df.sum(axis=1)
+
+    table_df = pivot_df.reset_index()
+    table_df.columns = ["date", "group"] + table_df.columns.to_list()[2:]
+
+    raw_rows = [
+        {"group": row["group"], "date": row["date"], "values": list(row)[2:]} for _, row in table_df.iterrows()
+    ]
+
+    return {"ok": True, "data": raw_rows}
+
+
+@app.get("/api/dn/filters")
+def get_dn_filter_options(db: Session = Depends(get_db)):
+    values, total = get_dn_unique_field_values(db)
+    data: dict[str, Any] = {**values, "total": total}
+    if "status_delivery" in data:
+        data.setdefault("status_deliver", data["status_delivery"])  # 兼容字段
+    return {"ok": True, "data": data}
+
+
+@app.get("/api/dn/status-delivery/stats")
+def get_dn_status_delivery_stats(
+    lsp: Optional[str] = Query(default=None),
+    plan_mos_date: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    normalized_lsp = lsp.strip() if lsp else None
+    normalized_plan_mos_date = (plan_mos_date.strip() if plan_mos_date else None) or datetime.now().strftime("%d %b %y")
+
+    stats = get_dn_status_delivery_counts(db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date)
+    total = sum(count for _, count in stats)
+
+    data = [{"status_delivery": status, "count": count} for status, count in stats]
+    return {"ok": True, "data": data, "total": total}
+
+
+
 # ============================== Routes: DN List/Stats ==============================
 @app.get("/api/dn/list")
 async def get_dn_list(db: Session = Depends(get_db)):
@@ -1865,75 +1935,6 @@ def list_vehicles_endpoint(
 
     vehicles = list_vehicle_entries(db, status=normalized_status, filter_by=filter_by, date_from=date_from, date_to=date_to)
     return {"ok": True, "vehicles": [serialize_vehicle(vehicle) for vehicle in vehicles]}
-
-
-# ============================== Routes: DN Stats/Filters ==============================
-@app.get("/api/dn/stats/{date}")
-async def get_dn_stats(date: str):
-    gc = create_gspread_client()
-    sh = gc.open_by_url(SPREADSHEET_URL)
-
-    combined_df = process_all_sheets(sh)
-
-    # 安全转换 plan_mos_date → "%d-%b-%y"
-    def _to_strf(x: Any) -> Any:
-        parsed = parse_date(x)
-        return parsed.strftime("%d-%b-%y") if isinstance(parsed, datetime) else x
-
-    combined_df["plan_mos_date"] = combined_df["plan_mos_date"].apply(_to_strf)
-
-    # 过滤日期
-    day_df = combined_df[combined_df["plan_mos_date"] == date]
-    day_df["status_delivery"] = day_df["status_delivery"].apply(lambda x: x.upper() if x else "NO STATUS")
-
-    pivot_df = (
-        day_df.groupby(["plan_mos_date", "region", "status_delivery"])['dn_number'].nunique().unstack(fill_value=0)
-    )
-
-    all_statuses = [
-        "PREPARE VEHICLE", "ON THE WAY", "ON SITE", "POD", "REPLAN MOS PROJECT", "WAITING PIC FEEDBACK",
-        "REPLAN MOS DUE TO LSP DELAY", "CLOSE BY RN", "CANCEL MOS", "NO STATUS"
-    ]
-
-    extra = list(set(pivot_df.columns.tolist()) - set(all_statuses))
-    final_statuses = all_statuses + extra
-
-    pivot_df = pivot_df.reindex(columns=final_statuses, fill_value=0)
-    pivot_df["Total"] = pivot_df.sum(axis=1)
-
-    table_df = pivot_df.reset_index()
-    table_df.columns = ["date", "group"] + table_df.columns.to_list()[2:]
-
-    raw_rows = [
-        {"group": row["group"], "date": row["date"], "values": list(row)[2:]} for _, row in table_df.iterrows()
-    ]
-
-    return {"ok": True, "data": raw_rows}
-
-
-@app.get("/api/dn/filters")
-def get_dn_filter_options(db: Session = Depends(get_db)):
-    values, total = get_dn_unique_field_values(db)
-    data: dict[str, Any] = {**values, "total": total}
-    if "status_delivery" in data:
-        data.setdefault("status_deliver", data["status_delivery"])  # 兼容字段
-    return {"ok": True, "data": data}
-
-
-@app.get("/api/dn/status-delivery/stats")
-def get_dn_status_delivery_stats(
-    lsp: Optional[str] = Query(default=None),
-    plan_mos_date: Optional[str] = Query(default=None),
-    db: Session = Depends(get_db),
-):
-    normalized_lsp = lsp.strip() if lsp else None
-    normalized_plan_mos_date = (plan_mos_date.strip() if plan_mos_date else None) or datetime.now().strftime("%d %b %y")
-
-    stats = get_dn_status_delivery_counts(db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date)
-    total = sum(count for _, count in stats)
-
-    data = [{"status_delivery": status, "count": count} for status, count in stats]
-    return {"ok": True, "data": data, "total": total}
 
 
 # ============================== Scheduler Hooks ==============================
