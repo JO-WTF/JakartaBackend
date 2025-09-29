@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -14,6 +15,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import router as api_router
 from app.core.sync import scheduled_dn_sheet_sync
+from app.core.status_delivery_summary import (
+    scheduled_status_delivery_lsp_summary_capture,
+)
 from app.db import Base, engine
 from app import models  # noqa: F401 - ensure models are imported for metadata creation
 from app.dn_columns import refresh_dynamic_columns
@@ -41,6 +45,7 @@ app.include_router(api_router)
 
 _scheduler: AsyncIOScheduler | None = None
 _SHEET_SYNC_JOB_ID = "dn_sheet_sync"
+_LSP_SUMMARY_JOB_ID = "status_delivery_lsp_summary"
 SHEET_SYNC_INTERVAL_SECONDS = 300
 
 
@@ -63,6 +68,13 @@ async def _start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
         next_run_time=datetime.utcnow() + timedelta(seconds=5),
+    )
+    _scheduler.add_job(
+        scheduled_status_delivery_lsp_summary_capture,
+        trigger=CronTrigger(minute=0),
+        id=_LSP_SUMMARY_JOB_ID,
+        max_instances=1,
+        coalesce=True,
     )
     _scheduler.start()
 

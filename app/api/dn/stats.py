@@ -14,12 +14,15 @@ from app.crud import (
     get_dn_status_delivery_counts,
     get_dn_status_delivery_lsp_counts,
     get_dn_unique_field_values,
+    list_status_delivery_lsp_stats,
 )
 from app.db import get_db
 from app.schemas.dn import (
     StatusDeliveryCount,
     StatusDeliveryLspSummary,
     StatusDeliveryStatsResponse,
+    StatusDeliveryLspSummaryRecord,
+    StatusDeliveryLspSummaryHistoryResponse,
 )
 
 router = APIRouter(prefix="/api/dn")
@@ -118,3 +121,33 @@ def get_dn_status_delivery_stats(
         total=total,
         lsp_summary=lsp_summary,
     )
+
+
+@router.get(
+    "/status-delivery/lsp-summary-records",
+    response_model=StatusDeliveryLspSummaryHistoryResponse,
+)
+def get_status_delivery_lsp_summary_records(
+    lsp: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+):
+    normalized_lsp = lsp.strip() if lsp else None
+
+    records = list_status_delivery_lsp_stats(
+        db, lsp=normalized_lsp, limit=limit
+    )
+
+    data = [
+        StatusDeliveryLspSummaryRecord(
+            id=record.id,
+            lsp=record.lsp,
+            total_dn=record.total_dn,
+            status_not_empty=record.status_not_empty,
+            plan_mos_date=record.plan_mos_date,
+            recorded_at=record.recorded_at,
+        )
+        for record in records
+    ]
+
+    return StatusDeliveryLspSummaryHistoryResponse(data=data)
