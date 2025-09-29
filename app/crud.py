@@ -695,7 +695,7 @@ def get_dn_status_delivery_counts(
     """Return DN counts grouped by status_delivery with optional filtering."""
 
     status_expr = func.coalesce(
-        func.nullif(func.trim(DN.status_delivery), ""), "NO STATUS"
+        func.nullif(func.trim(DN.status_delivery), ""), "No Status"
     )
 
     query = db.query(
