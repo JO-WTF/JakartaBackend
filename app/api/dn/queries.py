@@ -22,7 +22,7 @@ from app.crud import (
 )
 from app.db import get_db
 from app.dn_columns import get_sheet_columns
-from app.time_utils import parse_gmt7_date_range, to_gmt7_iso
+from app.time_utils import to_gmt7_iso
 
 from ..common import (
     DN_RE,
@@ -150,13 +150,8 @@ def get_dn_filters(db: Session = Depends(get_db)):
 
 
 @router.get("/status-delivery/stats")
-def get_dn_status_delivery_stats(
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
-    db: Session = Depends(get_db),
-):
-    modified_from, modified_to = parse_gmt7_date_range(date_from, date_to)
-    stats = get_dn_status_delivery_counts(db, modified_from, modified_to)
+def get_dn_status_delivery_stats(db: Session = Depends(get_db)):
+    stats = get_dn_status_delivery_counts(db)
     return {"ok": True, "data": stats}
 
 
