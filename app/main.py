@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, time, date
 from time import perf_counter
 import asyncio
-import re, os, unicodedata
+import re, os, unicodedata, json
 from functools import lru_cache
 from pathlib import Path
 
@@ -64,35 +64,59 @@ os.makedirs(settings.storage_disk_path, exist_ok=True)
 app = FastAPI(title="DU Backend API", version="1.1.0")
 
 GS_KEY_PATH = Path("/etc/secrets/gskey.json")
-try:
-    gs_key_content = GS_KEY_PATH.read_text(encoding="utf-8")
-    logger.info("Loaded gskey.json content: %s", gs_key_content)
-except FileNotFoundError:
-    logger.debug("gskey.json not found at %s, skipping", GS_KEY_PATH)
-except Exception as exc:
-    logger.debug("Failed to read gskey.json from %s: %s", GS_KEY_PATH, exc)
+_SERVICE_ACCOUNT_INFO: dict[str, Any] | None = None
+
+
+def _load_service_account_info() -> dict[str, Any]:
+    """Load Google service account credentials from env or fallback file."""
+
+    global _SERVICE_ACCOUNT_INFO
+    if _SERVICE_ACCOUNT_INFO is not None:
+        return _SERVICE_ACCOUNT_INFO
+
+    raw_credentials = settings.google_service_account_credentials
+    source_desc = "environment variable GOOGLE_SERVICE_ACCOUNT_CREDENTIALS"
+
+    if not raw_credentials:
+        source_desc = f"file {GS_KEY_PATH}"
+        if not GS_KEY_PATH.exists():
+            raise RuntimeError(
+                "Missing Google service account credentials. Set GOOGLE_SERVICE_ACCOUNT_CREDENTIALS or provide /etc/secrets/gskey.json."
+            )
+        try:
+            raw_credentials = GS_KEY_PATH.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "Missing Google service account credentials file at /etc/secrets/gskey.json."
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"Failed to read Google service account credentials from {GS_KEY_PATH}: {exc}"
+            ) from exc
+
+    try:
+        info = json.loads(raw_credentials)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Invalid JSON for Google service account credentials") from exc
+
+    _SERVICE_ACCOUNT_INFO = info
+    logger.info("Loaded Google service account credentials from %s", source_desc)
+    return info
 
 
 def create_gspread_client() -> gspread.Client:
-    """Create a gspread client using service account when available."""
+    """Create a gspread client using configured service account credentials."""
 
+    service_account_info = _load_service_account_info()
+    logger.debug("Creating gspread client using configured service account credentials")
     try:
-        logger.debug(
-            "Attempting to create gspread client using service account file at %s",
-            GS_KEY_PATH,
-        )
-        gc = gspread.service_account(filename=str(GS_KEY_PATH))
-        logger.info("Using gspread service account authentication")
-        return gc
+        gc = gspread.service_account_from_dict(service_account_info)
     except Exception as exc:
-        logger.warning(
-            "Failed to authenticate using service account at %s: %s. Falling back to API key.",
-            GS_KEY_PATH,
-            exc,
-        )
-        gc = gspread.api_key(API_KEY)
-        logger.info("Using gspread API key authentication")
-        return gc
+        logger.exception("Failed to authenticate using Google service account credentials: %s", exc)
+        raise
+
+    logger.info("Using gspread service account authentication")
+    return gc
 
 DN_SYNC_LOG_PATH = Path(os.getenv("DN_SYNC_LOG_PATH", "/tmp/dn_sync.log")).expanduser()
 DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1137,8 +1161,7 @@ def remove_dn_record(id: int, db: Session = Depends(get_db)):
 
 
 # 设置全局变量
-API_KEY = "AIzaSyCxIBYFpNlPvQUXY83S559PEVXoagh8f88"
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13-D-KkkbilYmlcHHa__CZkE2xtynL--ZxekZG4lWRic/edit?gid=1258103322#gid=1258103322"
+SPREADSHEET_URL = settings.google_spreadsheet_url
 
 
 ARCHIVE_TEXT_COLOR = {"red": 0.6, "green": 0.6, "blue": 0.6}

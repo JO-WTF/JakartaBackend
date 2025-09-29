@@ -7,13 +7,16 @@ class Settings(BaseSettings):
     database_url: str | None = os.getenv("DATABASE_URL")  # 不给默认，缺失就暴露问题
     allowed_origins: list[str] = []
     storage_driver: str = os.getenv("STORAGE_DRIVER", "disk")
-    storage_disk_path: str = os.getenv("storage_DISK_PATH", "/data/uploads")
+    storage_disk_path: str = os.getenv("STORAGE_DISK_PATH", "/data/uploads")
     s3_endpoint: str = os.getenv("S3_ENDPOINT", "")
     s3_region: str = os.getenv("S3_REGION", "")
     s3_bucket: str = os.getenv("S3_BUCKET", "")
     s3_access_key: str = os.getenv("S3_ACCESS_KEY", "")
     s3_secret_key: str = os.getenv("S3_SECRET_KEY", "")
     storage_base_url: str = os.getenv("STORAGE_BASE_URL", "")
+    google_api_key: str | None = os.getenv("GOOGLE_API_KEY")
+    google_spreadsheet_url: str = os.getenv("GOOGLE_SPREADSHEET_URL", "")
+    google_service_account_credentials: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS")
 
 settings = Settings()
 
