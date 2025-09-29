@@ -99,3 +99,50 @@ def test_status_delivery_and_lsp_counts(db_session):
         db_session, lsp=" Alpha", plan_mos_date="01 Jan 25"
     )
     assert alpha_only == [("Alpha", 2, 1)]
+
+
+def test_status_delivery_stats_response_format(db_session):
+    from app.api.dn.stats import get_dn_status_delivery_stats
+
+    _create_dn(
+        db_session,
+        dn_number="DN-1",
+        lsp="Alpha",
+        plan_mos_date="01 Jan 25",
+        status="Delivered",
+        status_delivery="POD",
+    )
+    _create_dn(
+        db_session,
+        dn_number="DN-2",
+        lsp="Alpha ",
+        plan_mos_date="01 Jan 25",
+        status="  ",
+        status_delivery="On Site",
+    )
+    _create_dn(
+        db_session,
+        dn_number="DN-3",
+        lsp="",
+        plan_mos_date="01 Jan 25",
+        status=None,
+        status_delivery=None,
+    )
+    db_session.commit()
+
+    response = get_dn_status_delivery_stats(
+        lsp=None, plan_mos_date="01 Jan 25", db=db_session
+    )
+    assert response.model_dump() == {
+        "ok": True,
+        "data": [
+            {"status_delivery": "NO STATUS", "count": 1},
+            {"status_delivery": "On Site", "count": 1},
+            {"status_delivery": "POD", "count": 1},
+        ],
+        "total": 3,
+        "lsp_summary": [
+            {"lsp": "Alpha", "total_dn": 2, "status_not_empty": 1},
+            {"lsp": "NO LSP", "total_dn": 1, "status_not_empty": 0},
+        ],
+    }

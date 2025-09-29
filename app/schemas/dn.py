@@ -6,7 +6,13 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
-__all__ = ["DNColumnExtensionRequest", "ArchiveMarkRequest"]
+__all__ = [
+    "DNColumnExtensionRequest",
+    "ArchiveMarkRequest",
+    "StatusDeliveryCount",
+    "StatusDeliveryLspSummary",
+    "StatusDeliveryStatsResponse",
+]
 
 
 class DNColumnExtensionRequest(BaseModel):
@@ -23,3 +29,27 @@ class ArchiveMarkRequest(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class StatusDeliveryCount(BaseModel):
+    status_delivery: str = Field(..., description="Status delivery label")
+    count: int = Field(..., ge=0, description="Number of DN rows for the status")
+
+
+class StatusDeliveryLspSummary(BaseModel):
+    lsp: str = Field(..., description="Logistics service provider name")
+    total_dn: int = Field(..., ge=0, description="Total DN rows for the LSP")
+    status_not_empty: int = Field(
+        ..., ge=0, description="DN rows for the LSP where status field is not empty"
+    )
+
+
+class StatusDeliveryStatsResponse(BaseModel):
+    ok: bool = Field(True, description="Whether the request succeeded")
+    data: List[StatusDeliveryCount] = Field(
+        ..., description="Status delivery counts for the requested Plan MOS date"
+    )
+    total: int = Field(..., ge=0, description="Total DN rows matching the filters")
+    lsp_summary: List[StatusDeliveryLspSummary] = Field(
+        ..., description="Aggregated LSP summary metrics"
+    )

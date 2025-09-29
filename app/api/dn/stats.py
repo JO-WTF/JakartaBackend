@@ -16,6 +16,11 @@ from app.crud import (
     get_dn_unique_field_values,
 )
 from app.db import get_db
+from app.schemas.dn import (
+    StatusDeliveryCount,
+    StatusDeliveryLspSummary,
+    StatusDeliveryStatsResponse,
+)
 
 router = APIRouter(prefix="/api/dn")
 
@@ -77,7 +82,7 @@ def get_dn_filter_options(db: Session = Depends(get_db)):
     return {"ok": True, "data": data}
 
 
-@router.get("/status-delivery/stats")
+@router.get("/status-delivery/stats", response_model=StatusDeliveryStatsResponse)
 def get_dn_status_delivery_stats(
     lsp: Optional[str] = Query(default=None),
     plan_mos_date: Optional[str] = Query(default=None),
@@ -91,18 +96,25 @@ def get_dn_status_delivery_stats(
     )
     total = sum(count for _, count in stats)
 
-    data = [{"status_delivery": status, "count": count} for status, count in stats]
+    data = [
+        StatusDeliveryCount(status_delivery=status, count=count)
+        for status, count in stats
+    ]
 
     lsp_stats = get_dn_status_delivery_lsp_counts(
         db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
     )
     lsp_summary = [
-        {
-            "lsp": lsp_value,
-            "total_dn": total_count,
-            "status_not_empty": status_count,
-        }
+        StatusDeliveryLspSummary(
+            lsp=lsp_value,
+            total_dn=total_count,
+            status_not_empty=status_count,
+        )
         for lsp_value, total_count, status_count in lsp_stats
     ]
 
-    return {"ok": True, "data": data, "total": total, "lsp_summary": lsp_summary}
+    return StatusDeliveryStatsResponse(
+        data=data,
+        total=total,
+        lsp_summary=lsp_summary,
+    )
