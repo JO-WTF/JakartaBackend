@@ -10,6 +10,7 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any, List
 
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -19,7 +20,7 @@ from app.core.sheet import (
     normalize_sheet_value,
     parse_date,
 )
-from app.crud import add_dn_record, create_dn_sync_log, ensure_dn, get_dn_map_by_numbers, get_latest_dn_records_map
+from app.crud import add_dn_record, create_dn_sync_log, ensure_dn, get_dn_map_by_numbers, get_latest_dn_records_map, _ACTIVE_DN_EXPR
 from app.db import SessionLocal
 from app.dn_columns import get_mutable_dn_columns
 from app.models import DN, Vehicle
@@ -84,6 +85,10 @@ STANDARD_STATUS_DELIVERY_VALUES: tuple[str, ...] = (
 _STATUS_DELIVERY_LOOKUP: dict[str, str] = {
     canonical.lower(): canonical for canonical in STANDARD_STATUS_DELIVERY_VALUES
 }
+_STATUS_DELIVERY_LOOKUP.update({
+    "close by rn": "Close by RN",
+    "no status": "No Status",
+})
 
 
 @dataclass
@@ -120,7 +125,7 @@ def normalize_database_fields(db: Session) -> None:
     """Normalize plan_mos_date and status_delivery fields in database."""
     dn_sync_logger.debug("Starting database field normalization")
 
-    dn_entries = db.query(DN).filter(DN.plan_mos_date.isnot(None)).all()
+    dn_entries = db.query(DN).filter(DN.plan_mos_date.isnot(None)).filter(_ACTIVE_DN_EXPR).all()
     normalized_plan_dates = 0
 
     for entry in dn_entries:
@@ -134,7 +139,7 @@ def normalize_database_fields(db: Session) -> None:
                 entry.plan_mos_date = normalized_value
                 normalized_plan_dates += 1
 
-    status_entries = db.query(DN).all()
+    status_entries = db.query(DN).filter(_ACTIVE_DN_EXPR).all()
     normalized_status_delivery = 0
     for entry in status_entries:
         normalized_value = _normalize_status_delivery_value(entry.status_delivery)
@@ -316,7 +321,9 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
 
     if not dn_numbers:
         dn_sync_logger.info(
-            "No DN numbers extracted (skipped_missing=%d, skipped_empty=%d)", skipped_missing_number, skipped_empty_payload
+            "No DN numbers extracted (skipped_missing=%d, skipped_empty=%d)",
+            skipped_missing_number,
+            skipped_empty_payload,
         )
         return DnSyncResult(synced_numbers=[], created_count=0, updated_count=0, ignored_count=0)
 
@@ -447,6 +454,38 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
     else:
         dn_sync_logger.info("No DN sheet changes detected; skipping database write")
 
+    dn_numbers_list = sorted(dn_numbers)
+    reset_active_count = 0
+    mark_deleted_count = 0
+
+    if dn_numbers_list:
+        reset_active_count = (
+            db.query(DN)
+            .filter(DN.dn_number.in_(dn_numbers_list))
+            .filter(func.coalesce(DN.is_deleted, "N") != "N")
+            .update({DN.is_deleted: "N"}, synchronize_session=False)
+        )
+        missing_q = db.query(DN).filter(~DN.dn_number.in_(dn_numbers_list))
+    else:
+        missing_q = db.query(DN)
+
+    mark_deleted_count = (
+        missing_q.filter(func.coalesce(DN.is_deleted, "N") != "Y").update({DN.is_deleted: "Y"}, synchronize_session=False)
+    )
+
+    if reset_active_count or mark_deleted_count:
+        db.commit()
+        if reset_active_count:
+            dn_sync_logger.info(
+                "Reset is_deleted to 'N' for %d DN rows present in Google Sheet",
+                reset_active_count,
+            )
+        if mark_deleted_count:
+            dn_sync_logger.info(
+                "Marked %d DN rows as deleted (missing from Google Sheet)",
+                mark_deleted_count,
+            )
+
     normalization_start = perf_counter()
     normalize_database_fields(db)
     dn_sync_logger.debug("normalize_database_fields completed in %.3fs", perf_counter() - normalization_start)
@@ -468,7 +507,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
     )
 
     return DnSyncResult(
-        synced_numbers=sorted(dn_numbers),
+        synced_numbers=dn_numbers_list,
         created_count=created_count,
         updated_count=updated_count,
         ignored_count=unchanged_count,

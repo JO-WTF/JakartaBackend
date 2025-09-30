@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.sync import DN_RE
@@ -57,7 +58,12 @@ def _collect_query_values(*values: Any) -> list[str] | None:
 
 @router.get("/list")
 async def get_dn_list(db: Session = Depends(get_db)):
-    items = db.query(DN).order_by(DN.dn_number.asc()).all()
+    items = (
+        db.query(DN)
+        .filter(func.coalesce(DN.is_deleted, "N") == "N")
+        .order_by(DN.dn_number.asc())
+        .all()
+    )
     if not items:
         return {"ok": True, "data": []}
 

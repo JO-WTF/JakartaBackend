@@ -29,6 +29,7 @@ class DN(Base):
     __tablename__ = "dn"
     id = Column(Integer, primary_key=True, index=True)
     dn_number = Column(Text, unique=True, index=True, nullable=False)
+    is_deleted = Column(String(1), nullable=False, default="N", server_default="N")
     du_id = Column(Text, nullable=True)
     status = Column(Text, nullable=True)
     remark = Column(Text, nullable=True)

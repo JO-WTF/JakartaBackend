@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("STORAGE_DISK_PATH", "./data/uploads")
 
 
 from app.db import Base  # noqa: E402

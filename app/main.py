@@ -18,8 +18,9 @@ from app.core.sync import scheduled_dn_sheet_sync
 from app.core.status_delivery_summary import (
     scheduled_status_delivery_lsp_summary_capture,
 )
-from app.db import Base, engine
+from app.db import Base, engine, SessionLocal
 from app import models  # noqa: F401 - ensure models are imported for metadata creation
+from app.db_migrations import run_startup_migrations
 from app.dn_columns import refresh_dynamic_columns
 from app.settings import settings
 from app.utils.logging import logger
@@ -39,6 +40,11 @@ if settings.storage_driver != "s3":
     app.mount("/uploads", StaticFiles(directory=settings.storage_disk_path, check_dir=False), name="uploads")
 
 Base.metadata.create_all(bind=engine)
+
+# Run startup migrations to ensure schema is up to date
+with SessionLocal() as db:
+    run_startup_migrations(db)
+
 refresh_dynamic_columns(engine)
 
 app.include_router(api_router)

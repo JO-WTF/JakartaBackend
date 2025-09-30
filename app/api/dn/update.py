@@ -16,6 +16,7 @@ from app.crud import (
     ensure_dn,
     get_existing_dn_numbers,
     update_dn_record,
+    _ACTIVE_DN_EXPR,
 )
 from app.db import get_db
 from app.models import DN
@@ -62,7 +63,7 @@ def update_dn(
     if delivery_status_value is None:
         delivery_status_value = "On Site" if status == "ARRIVED AT SITE" else "On The Way"
 
-    existing_dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
+    existing_dn = db.query(DN).filter(DN.dn_number == dn_number).filter(_ACTIVE_DN_EXPR).one_or_none()
     gs_sheet_name = existing_dn.gs_sheet if existing_dn is not None else None
     raw_gs_row = existing_dn.gs_row if existing_dn is not None else None
 
