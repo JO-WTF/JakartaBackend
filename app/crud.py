@@ -618,7 +618,7 @@ def search_dn_list(
 
     total = base_q.count()
     ordered_q = base_q.order_by(latest_record_expr.desc(), DN.id.desc())
-    
+
     if page_size is None:
         items = ordered_q.all()
     else:
