@@ -15,7 +15,7 @@ from app.utils.logging import dn_sync_logger, logger
 from app.utils.string import normalize_dn
 from app.utils.time import TZ_GMT7
 
-MONTH_MAP = {"Sept": "Sep"}
+MONTH_MAP = {"Sept": "Sep", "Okt": "Oct"}
 DATE_FORMATS = [
     "%d %b %y",
     "%d %b %Y",
