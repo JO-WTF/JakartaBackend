@@ -172,6 +172,19 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         sheet_start = perf_counter()
         combined_df = process_all_sheets(sh)
         dn_sync_logger.debug("Fetched+combined sheet data in %.3fs", perf_counter() - sheet_start)
+        
+        # Deduplicate by dn_number, keeping the last occurrence
+        if not combined_df.empty and "dn_number" in combined_df.columns:
+            original_rows = len(combined_df)
+            combined_df = combined_df.drop_duplicates(subset=["dn_number"], keep="last")
+            deduplicated_rows = len(combined_df)
+            if original_rows != deduplicated_rows:
+                logger.info(
+                    "Deduplicated Google Sheets data: %d rows -> %d rows (removed %d duplicates)",
+                    original_rows,
+                    deduplicated_rows,
+                    original_rows - deduplicated_rows
+                )
     except Exception as exc:
         logger.exception("Failed to fetch DN sheet data: %s", exc)
         dn_sync_logger.exception("Failed to fetch DN sheet data")
@@ -208,6 +221,9 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         status_delivery_index = (
             sheet_columns.index("status_delivery") if "status_delivery" in sheet_columns else None
         )
+
+        # Track duplicate DN numbers for logging
+        dn_occurrence_count: dict[str, int] = {}
 
         if dn_index is not None:
             for row_values in combined_df.itertuples(index=False, name=None):
@@ -263,10 +279,19 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 normalized_row[dn_index] = normalized_number
                 cleaned = dict(zip(columns_tuple, normalized_row))
                 
+                # Track duplicate DN numbers
+                dn_occurrence_count[normalized_number] = dn_occurrence_count.get(normalized_number, 0) + 1
+                if dn_occurrence_count[normalized_number] > 1:
+                    logger.warning(
+                        "Duplicate DN %s found (occurrence #%d) - later rows will overwrite earlier ones",
+                        normalized_number,
+                        dn_occurrence_count[normalized_number]
+                    )
+                
                 # Log plan_mos_date processing for debugging
                 if plan_mos_index is not None and original_plan_mos_date is not None:
                     current_plan_mos_date = cleaned.get("plan_mos_date")
-                    dn_sync_logger.debug(
+                    logger.info(
                         "DN %s plan_mos_date processing: original='%s' -> normalized='%s'",
                         normalized_number,
                         original_plan_mos_date,
@@ -277,6 +302,15 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 record_build_total += perf_counter() - record_build_start
                 rows_persisted += 1
                 dn_numbers.add(normalized_number)
+                
+        # Log duplicate DN statistics
+        duplicate_dns = {dn: count for dn, count in dn_occurrence_count.items() if count > 1}
+        if duplicate_dns:
+            logger.warning(
+                "Found %d duplicate DN numbers in Google Sheets: %s",
+                len(duplicate_dns),
+                dict(list(duplicate_dns.items())[:5])  # Show first 5 duplicates
+            )
     else:
         dn_sync_logger.info("Combined DataFrame is empty; no rows to process")
 
