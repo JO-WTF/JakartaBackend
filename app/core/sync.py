@@ -10,7 +10,6 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any, List
 
-from sqlalchemy import func, or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -135,13 +134,15 @@ def normalize_database_fields(db: Session) -> None:
                 entry.plan_mos_date = normalized_value
                 normalized_plan_dates += 1
 
-    status_entries = (
-        db.query(DN).filter(or_(DN.status_delivery.is_(None), func.trim(DN.status_delivery) == "")).all()
-    )
+    status_entries = db.query(DN).all()
     normalized_status_delivery = 0
     for entry in status_entries:
-        entry.status_delivery = "No Status"
-        normalized_status_delivery += 1
+        normalized_value = _normalize_status_delivery_value(entry.status_delivery)
+        if normalized_value is None:
+            normalized_value = "No Status"
+        if normalized_value != entry.status_delivery:
+            entry.status_delivery = normalized_value
+            normalized_status_delivery += 1
 
     if normalized_plan_dates or normalized_status_delivery:
         db.commit()
