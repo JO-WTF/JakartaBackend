@@ -70,6 +70,22 @@ VALID_STATUS_DESCRIPTION = ", ".join(VALID_STATUSES)
 
 VEHICLE_VALID_STATUSES: tuple[str, ...] = ("arrived", "departed")
 
+STANDARD_STATUS_DELIVERY_VALUES: tuple[str, ...] = (
+    "Prepare Vehicle",
+    "On The Way",
+    "On Site",
+    "POD",
+    "Waiting PIC Feedback",
+    "RePlan MOS due to LSP Delay",
+    "RePlan MOS Project",
+    "Cancel MOS",
+    "Close by RN",
+)
+
+_STATUS_DELIVERY_LOOKUP: dict[str, str] = {
+    canonical.lower(): canonical for canonical in STANDARD_STATUS_DELIVERY_VALUES
+}
+
 
 @dataclass
 class DnSyncResult:
@@ -89,6 +105,16 @@ def _values_match(existing_value: Any, new_value: Any) -> bool:
     if isinstance(new_value, str):
         new_value = new_value.strip() or None
     return existing_value == new_value
+
+
+def _normalize_status_delivery_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    collapsed = " ".join(value.split())
+    if not collapsed:
+        return None
+    canonical = _STATUS_DELIVERY_LOOKUP.get(collapsed.lower())
+    return canonical if canonical is not None else collapsed
 
 
 def normalize_database_fields(db: Session) -> None:
@@ -178,6 +204,9 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
             dn_index = None
 
         plan_mos_index = sheet_columns.index("plan_mos_date") if "plan_mos_date" in sheet_columns else None
+        status_delivery_index = (
+            sheet_columns.index("status_delivery") if "status_delivery" in sheet_columns else None
+        )
 
         if dn_index is not None:
             for row_values in combined_df.itertuples(index=False, name=None):
@@ -207,6 +236,12 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                     normalized_row.append(normalized_value)
 
                 row_normalization_total += perf_counter() - row_normalization_start
+
+                if status_delivery_index is not None:
+                    normalized_status = _normalize_status_delivery_value(
+                        normalized_row[status_delivery_index]
+                    )
+                    normalized_row[status_delivery_index] = normalized_status
 
                 dn_normalization_start = perf_counter()
                 raw_number = normalized_row[dn_index]
