@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.google import SPREADSHEET_URL, create_gspread_client
-from app.core.sheet import parse_date, process_all_sheets
 from app.crud import (
     get_dn_status_delivery_counts,
     get_dn_status_delivery_lsp_counts,
@@ -24,56 +22,59 @@ from app.schemas.dn import (
     StatusDeliveryLspSummaryRecord,
     StatusDeliveryLspSummaryHistoryResponse,
 )
+from app.core.sync import STANDARD_STATUS_DELIVERY_VALUES
 
 router = APIRouter(prefix="/api/dn")
 
+NO_STATUS_LABEL = "No Status"
+_BASE_STATUS_ORDER = list(STANDARD_STATUS_DELIVERY_VALUES) + [NO_STATUS_LABEL]
+_STATUS_LOOKUP = {status.lower(): status for status in STANDARD_STATUS_DELIVERY_VALUES}
+_STATUS_LOOKUP[NO_STATUS_LABEL.lower()] = NO_STATUS_LABEL
+
+
+def _canonicalize_status_delivery(value: Optional[str]) -> str:
+    if value is None:
+        return NO_STATUS_LABEL
+    collapsed = " ".join(value.split())
+    if not collapsed:
+        return NO_STATUS_LABEL
+    canonical = _STATUS_LOOKUP.get(collapsed.lower())
+    if canonical:
+        return canonical
+    return collapsed
+
 
 @router.get("/stats/{date}")
-async def get_dn_stats(date: str):
-    gc = create_gspread_client()
-    sh = gc.open_by_url(SPREADSHEET_URL)
+def get_dn_stats(date: str, db: Session = Depends(get_db)):
+    normalized_date = date.strip()
+    if not normalized_date:
+        return {"ok": True, "data": []}
 
-    combined_df = process_all_sheets(sh)
-
-    def _to_strf(value: Any) -> Any:
-        parsed = parse_date(value)
-        return parsed.strftime("%d-%b-%y") if isinstance(parsed, datetime) else value
-
-    combined_df["plan_mos_date"] = combined_df["plan_mos_date"].apply(_to_strf)
-    day_df = combined_df[combined_df["plan_mos_date"] == date]
-    day_df["status_delivery"] = day_df["status_delivery"].apply(lambda x: x.upper() if x else "NO STATUS")
-
-    pivot_df = (
-        day_df.groupby(["plan_mos_date", "region", "status_delivery"])['dn_number'].nunique().unstack(fill_value=0)
+    raw_counts = get_dn_status_delivery_counts(
+        db, plan_mos_date=normalized_date
     )
 
-    all_statuses = [
-        "PREPARE VEHICLE",
-        "ON THE WAY",
-        "ON SITE",
-        "POD",
-        "REPLAN MOS PROJECT",
-        "WAITING PIC FEEDBACK",
-        "REPLAN MOS DUE TO LSP DELAY",
-        "CLOSE BY RN",
-        "CANCEL MOS",
-        "NO STATUS",
-    ]
+    status_counts: dict[str, int] = {}
+    for status, count in raw_counts:
+        canonical_status = _canonicalize_status_delivery(status)
+        status_counts[canonical_status] = status_counts.get(canonical_status, 0) + count
 
-    extra = list(set(pivot_df.columns.tolist()) - set(all_statuses))
-    final_statuses = all_statuses + extra
+    base_statuses = [status for status in _BASE_STATUS_ORDER if status]
+    extra_statuses = [status for status in status_counts if status not in base_statuses]
+    extra_statuses.sort()
+    final_statuses = base_statuses + extra_statuses
 
-    pivot_df = pivot_df.reindex(columns=final_statuses, fill_value=0)
-    pivot_df["Total"] = pivot_df.sum(axis=1)
+    values = [status_counts.get(status, 0) for status in final_statuses]
+    total_count = sum(status_counts.values())
+    values.append(total_count)
 
-    table_df = pivot_df.reset_index()
-    table_df.columns = ["date", "group"] + table_df.columns.to_list()[2:]
+    row = {
+        "group": "Total",
+        "date": normalized_date,
+        "values": values,
+    }
 
-    raw_rows = [
-        {"group": row["group"], "date": row["date"], "values": list(row)[2:]} for _, row in table_df.iterrows()
-    ]
-
-    return {"ok": True, "data": raw_rows}
+    return {"ok": True, "data": [row]}
 
 
 @router.get("/filters")
