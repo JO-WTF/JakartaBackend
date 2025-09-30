@@ -835,7 +835,7 @@ def list_status_delivery_lsp_stats(
     db: Session,
     *,
     lsp: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 5000,
 ) -> list[StatusDeliveryLspStat]:
     """Return stored LSP summary statistics ordered by newest first."""
 
@@ -845,7 +845,7 @@ def list_status_delivery_lsp_stats(
     if trimmed_lsp:
         query = query.filter(StatusDeliveryLspStat.lsp == trimmed_lsp)
 
-    limit = max(1, min(int(limit or 1), 1000))
+    limit = max(1, min(int(limit or 1), 10000))
 
     return (
         query.order_by(

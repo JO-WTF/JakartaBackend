@@ -130,7 +130,7 @@ def get_dn_status_delivery_stats(
 )
 def get_status_delivery_lsp_summary_records(
     lsp: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=5000, ge=1, le=10000),
     db: Session = Depends(get_db),
 ):
     normalized_lsp = lsp.strip() if lsp else None
