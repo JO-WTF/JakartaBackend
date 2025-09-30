@@ -215,6 +215,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 row_normalization_start = perf_counter()
                 normalized_row: list[Any] = []
                 has_payload = False
+                original_plan_mos_date = None  # Track original plan_mos_date for logging
 
                 for idx, raw_value in enumerate(row_values):
                     normalized_value = normalize_sheet_value(raw_value)
@@ -225,6 +226,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                         and normalized_value
                     ):
                         parse_start = perf_counter()
+                        original_plan_mos_date = normalized_value  # Store original value for logging
                         parsed_plan_mos_date = parse_date(normalized_value)
                         plan_mos_parse_total += perf_counter() - parse_start
                         plan_mos_parse_count += 1
@@ -260,6 +262,17 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 record_build_start = perf_counter()
                 normalized_row[dn_index] = normalized_number
                 cleaned = dict(zip(columns_tuple, normalized_row))
+                
+                # Log plan_mos_date processing for debugging
+                if plan_mos_index is not None and original_plan_mos_date is not None:
+                    current_plan_mos_date = cleaned.get("plan_mos_date")
+                    dn_sync_logger.debug(
+                        "DN %s plan_mos_date processing: original='%s' -> normalized='%s'",
+                        normalized_number,
+                        original_plan_mos_date,
+                        current_plan_mos_date
+                    )
+                
                 records.append(cleaned)
                 record_build_total += perf_counter() - record_build_start
                 rows_persisted += 1
