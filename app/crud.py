@@ -493,7 +493,7 @@ def search_dn_list(
     last_modified_from: datetime | None = None,
     last_modified_to: datetime | None = None,
     page: int = 1,
-    page_size: int = 20,
+    page_size: int | None = 20,
 ) -> Tuple[int, List[DN]]:
     latest_record_subq = (
         db.query(
@@ -617,12 +617,17 @@ def search_dn_list(
         base_q = base_q.filter(and_(*conds))
 
     total = base_q.count()
-    items = (
-        base_q.order_by(latest_record_expr.desc(), DN.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    ordered_q = base_q.order_by(latest_record_expr.desc(), DN.id.desc())
+    
+    if page_size is None:
+        items = ordered_q.all()
+    else:
+        items = (
+            ordered_q
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
     return total, items
 
 

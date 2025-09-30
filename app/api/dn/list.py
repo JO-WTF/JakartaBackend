@@ -112,9 +112,23 @@ def search_dn_list_api(
     date_from: datetime | None = Query(None, description="Last modified start time (ISO 8601)"),
     date_to: datetime | None = Query(None, description="Last modified end time (ISO 8601)"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: str | int = Query(20, description="Page size (number or 'all' for all records)"),
     db: Session = Depends(get_db),
 ):
+    # Handle page_size parameter
+    if isinstance(page_size, str) and page_size.lower() == "all":
+        actual_page_size = None  # None means no limit
+        page = 1  # Force page to 1 when getting all records
+    else:
+        try:
+            actual_page_size = int(page_size)
+            if actual_page_size < 1:
+                raise HTTPException(status_code=400, detail="Page size must be positive")
+            if actual_page_size > 2000:
+                raise HTTPException(status_code=400, detail="Page size cannot exceed 2000 (use 'all' for unlimited)")
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Page size must be a number or 'all'")
+
     dn_query_value = dn_number or dnnumber_legacy
     dn_number = normalize_dn(dn_query_value) if dn_query_value else None
     if dn_number and not DN_RE.fullmatch(dn_number):
@@ -149,7 +163,7 @@ def search_dn_list_api(
         last_modified_from=modified_from,
         last_modified_to=modified_to,
         page=page,
-        page_size=page_size,
+        page_size=actual_page_size,
     )
 
     if not items:
