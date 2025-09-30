@@ -8,16 +8,18 @@ from sqlalchemy.orm import sessionmaker
 
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("STORAGE_DISK_PATH", "./data/uploads")
 
 
 from app.crud import (  # noqa: E402
     get_dn_status_delivery_counts,
     get_dn_status_delivery_lsp_counts,
     list_status_delivery_lsp_stats,
+    search_dn_list,
     upsert_status_delivery_lsp_stats,
 )
 from app.db import Base  # noqa: E402
-from app.models import DN, StatusDeliveryLspStat  # noqa: E402
+from app.models import DN  # noqa: E402
 
 
 @pytest.fixture
@@ -42,6 +44,7 @@ def _create_dn(
     plan_mos_date: str | None,
     status: str | None,
     status_delivery: str | None,
+    is_deleted: str = "N",
 ):
     db_session.add(
         DN(
@@ -50,6 +53,7 @@ def _create_dn(
             plan_mos_date=plan_mos_date,
             status=status,
             status_delivery=status_delivery,
+            is_deleted=is_deleted,
         )
     )
 
@@ -86,6 +90,15 @@ def test_status_delivery_and_lsp_counts(db_session):
         plan_mos_date="02 Jan 25",
         status="Delivered",
         status_delivery="POD",
+    )
+    _create_dn(
+        db_session,
+        dn_number="DN-5",
+        lsp="Gamma",
+        plan_mos_date="01 Jan 25",
+        status="Delivered",
+        status_delivery="POD",
+        is_deleted="Y",
     )
     db_session.commit()
 
@@ -131,6 +144,15 @@ def test_status_delivery_stats_response_format(db_session):
         plan_mos_date="01 Jan 25",
         status=None,
         status_delivery=None,
+    )
+    _create_dn(
+        db_session,
+        dn_number="DN-9",
+        lsp="Zeta",
+        plan_mos_date="01 Jan 25",
+        status="Delivered",
+        status_delivery="POD",
+        is_deleted="Y",
     )
     db_session.commit()
 
@@ -199,6 +221,32 @@ def test_upsert_and_list_lsp_summary_stats(db_session):
     assert [(row.lsp, row.total_dn, row.status_not_empty) for row in alpha_only] == [
         ("Alpha", 6, 4)
     ]
+
+
+def test_search_dn_list_excludes_deleted(db_session):
+    _create_dn(
+        db_session,
+        dn_number="ACTIVE-1",
+        lsp="Active",
+        plan_mos_date="01 Jan 25",
+        status="Delivered",
+        status_delivery="POD",
+    )
+    _create_dn(
+        db_session,
+        dn_number="DELETED-1",
+        lsp="Removed",
+        plan_mos_date="01 Jan 25",
+        status="On Hold",
+        status_delivery="On The Way",
+        is_deleted="Y",
+    )
+    db_session.commit()
+
+    total, items = search_dn_list(db_session, page=1, page_size=None)
+
+    assert total == 1
+    assert [item.dn_number for item in items] == ["ACTIVE-1"]
 
 
 def test_get_status_delivery_lsp_summary_records(db_session):

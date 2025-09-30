@@ -10,6 +10,9 @@ from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat
 from .dn_columns import filter_assignable_dn_fields
 
 
+_ACTIVE_DN_EXPR = func.coalesce(DN.is_deleted, "N") == "N"
+
+
 def _normalize_vehicle_plate(vehicle_plate: str) -> str:
     return "".join(vehicle_plate.split()).upper()
 
@@ -126,17 +129,25 @@ def list_vehicles(
 
 def ensure_dn(db: Session, dn_number: str, **fields: Any) -> DN:
     assignable = filter_assignable_dn_fields(fields)
-    non_null_assignable = {k: v for k, v in assignable.items() if v is not None}
+    # Exclude is_deleted from non_null_assignable to avoid conflicts
+    # since we explicitly set it in the constructor
+    non_null_assignable = {
+        k: v for k, v in assignable.items()
+        if v is not None and k != 'is_deleted'
+    }
 
     dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
     if not dn:
-        dn = DN(dn_number=dn_number, **non_null_assignable)
+        dn = DN(dn_number=dn_number, is_deleted="N", **non_null_assignable)
         db.add(dn)
         db.commit()
         db.refresh(dn)
         return dn
 
     updated = False
+    if dn.is_deleted != "N":
+        dn.is_deleted = "N"
+        updated = True
     for key, value in non_null_assignable.items():
         if getattr(dn, key, None) != value:
             setattr(dn, key, value)
@@ -410,6 +421,7 @@ def list_dn_by_dn_numbers(
             latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
         )
         .filter(DN.dn_number.in_(numbers))
+        .filter(_ACTIVE_DN_EXPR)
     )
 
     total = base_q.count()
@@ -509,6 +521,7 @@ def search_dn_list(
         .outerjoin(
             latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
         )
+        .filter(_ACTIVE_DN_EXPR)
     )
     latest_record_expr = func.coalesce(
         latest_record_subq.c.latest_record_created_at, DN.created_at
@@ -649,6 +662,7 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
         trimmed = func.trim(column).label("value")
         query = (
             db.query(trimmed)
+            .filter(_ACTIVE_DN_EXPR)
             .filter(column.isnot(None))
             .filter(func.length(trimmed) > 0)
             .distinct()
@@ -661,7 +675,7 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
 
         distinct_values[key] = values
 
-    total = db.query(func.count(DN.id)).scalar() or 0
+    total = db.query(func.count(DN.id)).filter(_ACTIVE_DN_EXPR).scalar() or 0
 
     return distinct_values, int(total)
 
@@ -703,8 +717,11 @@ def get_dn_status_delivery_counts(
         func.nullif(func.trim(DN.status_delivery), ""), "NO STATUS"
     )
 
-    query = db.query(
-        status_expr.label("status_delivery"), func.count(DN.id).label("count")
+    query = (
+        db.query(
+            status_expr.label("status_delivery"), func.count(DN.id).label("count")
+        )
+        .filter(_ACTIVE_DN_EXPR)
     )
 
     trimmed_lsp = lsp.strip() if lsp else None
@@ -736,10 +753,13 @@ def get_dn_status_delivery_lsp_counts(
     trimmed_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
     trimmed_lsp = lsp.strip() if lsp else None
 
-    query = db.query(
-        lsp_expr.label("lsp"),
-        func.count(DN.id).label("total_count"),
-        func.count(func.nullif(func.trim(DN.status), "")).label("status_not_empty_count"),
+    query = (
+        db.query(
+            lsp_expr.label("lsp"),
+            func.count(DN.id).label("total_count"),
+            func.count(func.nullif(func.trim(DN.status), "")).label("status_not_empty_count"),
+        )
+        .filter(_ACTIVE_DN_EXPR)
     )
 
     if trimmed_plan_mos_date:
