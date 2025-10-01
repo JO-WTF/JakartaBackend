@@ -1,211 +1,412 @@
-# Jakarta Backend
+# JakartaBackend 技术文档
 
-A FastAPI-based backend service for DN (Delivery Note) management with Google Sheets integration.
+## 项目概述
 
-## Features
+JakartaBackend 是一个基于 FastAPI 构建的物流管理系统后端服务，主要负责配送单据（Delivery Note，简称 DN）的管理和车辆调度。系统通过与 Google Sheets 集成，实现数据的自动化同步和处理。
 
-- DN (Delivery Note) CRUD operations with soft delete support
-- Google Sheets bidirectional synchronization
-- Vehicle management and tracking
-- Status delivery analytics and reporting
-- Scheduled data synchronization
-- File upload and storage (S3/local)
-- Database migrations with automatic schema updates
+### 主要功能
+- **数据同步**: 与 Google Sheets 的双向数据同步 (每 5 分钟自动同步)
+- **配送管理**: DN 状态跟踪和历史记录管理 (支持软删除)
+- **车辆调度**: 车辆签到/离场管理
+- **统计分析**: 实时数据统计和趋势分析 (每小时快照)
+- **文件管理**: 照片等附件的上传和存储 (S3/本地)
+- **状态规范化**: 自动规范化 status_delivery 值为标准格式
+- **时区支持**: 统一使用雅加达时区 (GMT+7)
 
-## Technology Stack
+## 技术架构
 
-- **Framework**: FastAPI 0.116.2
-- **Database**: PostgreSQL with SQLAlchemy 2.0.36 ORM
-- **Authentication**: Vehicle-based authentication system
-- **Task Scheduling**: APScheduler for background jobs
-- **Data Processing**: Pandas for Google Sheets data manipulation
-- **Cloud Storage**: AWS S3 via boto3
-- **Validation**: Pydantic for data validation
+### 技术栈
+- **Web 框架**: FastAPI 0.116.2 (Python 3.13+)
+- **数据库**: PostgreSQL + SQLAlchemy 2.0.36 ORM
+- **外部集成**: Google Sheets API (gspread)
+- **任务调度**: APScheduler (AsyncIO 定时任务)
+- **文件存储**: AWS S3 / 本地文件系统
+- **部署**: Docker 容器化
+- **测试**: Pytest 8.3.4 + pytest-asyncio 0.23.5.post1
 
-## Setup
-
-### Prerequisites
-
-- Python 3.11+ (tested with 3.13.3)
-- PostgreSQL database
-- Google Sheets API credentials
-
-### Installation
-
-#### Quick Setup (Recommended)
-
-Run the automated setup script:
-```bash
-chmod +x setup.sh
-./setup.sh
+### 架构设计
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Web Client    │    │  Google Sheets  │    │   File Storage  │
+│                 │    │                 │    │   (S3/Local)   │
+└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
+          │                      │                      │
+          │ HTTP/JSON            │ API                  │ Upload
+          │                      │                      │
+          ▼                      ▼                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    FastAPI Application                         │
+├─────────────────┬───────────────────────┬───────────────────────┤
+│   API Routes    │    Core Business      │     Data Layer        │
+│                 │       Logic           │                       │
+│ • DN Management │ • Sheet Sync          │ • SQLAlchemy Models   │
+│ • Vehicle APIs  │ • Data Processing     │ • Database Sessions   │
+│ • Statistics    │ • Task Scheduling     │ • CRUD Operations     │
+│ • File Upload   │ • Error Handling      │ • Dynamic Columns     │
+└─────────────────┴───────────────────────┴───────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    PostgreSQL Database                         │
+│                                                                 │
+│ Tables: Vehicle, DN, DNRecord, DNSyncLog, StatusDeliveryLspStat │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-The script will:
-- Check your Python version and warn about compatibility issues
-- Install PostgreSQL tools if needed (macOS)
-- Let you choose between production, development, or Python 3.13 compatible dependencies
-- Handle virtual environment detection
-
-#### Manual Setup
-
-1. **Create a virtual environment** (recommended):
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-2. **Install PostgreSQL tools** (macOS only):
-   ```bash
-   brew install postgresql@14
-   export PATH="/opt/homebrew/opt/postgresql@14/bin:$PATH"
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   # Production environment
-   pip install -r requirements.txt
-   
-   # Development environment (includes testing and code quality tools)
-   pip install -r requirements-dev.txt
-   
-   # Python 3.13 compatibility (if needed)
-   pip install -r requirements-python313.txt
-   ```
-
-4. **Set up environment variables** (see Configuration section)
-
-5. **Run database migrations** (automatic on startup)
-
-6. **Start the server**:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-
-## Configuration
-
-Create a `.env` file or set environment variables:
-
-```env
-DATABASE_URL=postgresql://user:password@localhost/dbname
-GOOGLE_SHEETS_CREDENTIALS_JSON=path/to/credentials.json
-SPREADSHEET_URL=https://docs.google.com/spreadsheets/d/your-sheet-id
-AWS_ACCESS_KEY_ID=your-aws-key
-AWS_SECRET_ACCESS_KEY=your-aws-secret
-S3_BUCKET_NAME=your-bucket-name
-```
-
-## API Documentation
-
-Once running, access the interactive API documentation at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-## Key Features
-
-### Soft Delete System
-- All DN records use `is_deleted` field for soft deletion
-- Deleted records are hidden from normal queries but preserved for audit
-
-### Google Sheets Sync
-- Automatic bidirectional sync every 5 minutes
-- Missing DNs in sheets are marked as deleted
-- Present DNs are automatically restored
-
-### Database Migrations
-- Automatic schema updates on startup
-- Detects missing columns and adds them safely
-- Handles complex default values and constraints
-
-### Scheduled Tasks
-- DN sheet synchronization: every 5 minutes
-- Status delivery statistics: hourly aggregation
-
-## Development
-
-### Running Tests
-
-```bash
-pytest
-```
-
-### Code Quality
-
-```bash
-# Format code
-black .
-
-# Sort imports
-isort .
-
-# Lint code
-flake8 .
-
-# Type checking
-mypy .
-```
-
-## Project Structure
+## 项目结构
 
 ```
 app/
-├── api/           # API endpoints
-├── core/          # Core business logic
-├── schemas/       # Pydantic models
-├── utils/         # Utility functions
-├── models.py      # SQLAlchemy models
-├── crud.py        # Database operations
-├── db.py          # Database configuration
-└── main.py        # Application entry point
+├── main.py                 # 应用入口和配置
+├── settings.py             # 环境变量和配置管理
+├── db.py                   # 数据库连接和会话管理
+├── models.py               # SQLAlchemy 数据模型
+├── crud.py                 # 数据库操作(CRUD)
+├── storage.py              # 文件存储抽象层
+├── dn_columns.py           # 动态列管理
+├── time_utils.py           # 时间工具函数
+├── api/                    # API 路由
+│   ├── __init__.py
+│   ├── health.py           # 健康检查接口
+│   ├── dn/                 # DN 相关接口
+│   │   ├── list.py         # DN 列表和搜索
+│   │   ├── query.py        # DN 查询接口
+│   │   ├── update.py       # DN 更新操作
+│   │   ├── stats.py        # 统计接口
+│   │   ├── sync.py         # 同步管理
+│   │   ├── columns.py      # 列管理
+│   │   └── archive.py      # 数据归档
+│   └── vehicle/            # 车辆相关接口
+│       ├── signin.py       # 车辆签到
+│       ├── depart.py       # 车辆离场
+│       └── query.py        # 车辆查询
+├── core/                   # 核心业务逻辑
+│   ├── google.py           # Google API 集成
+│   ├── sheet.py            # Google Sheets 操作
+│   ├── sync.py             # 数据同步逻辑
+│   └── status_delivery_summary.py  # 状态统计
+├── schemas/                # Pydantic 数据模型
+│   ├── dn.py               # DN 相关数据模型
+│   └── vehicle.py          # 车辆相关数据模型
+└── utils/                  # 工具函数
+    ├── logging.py          # 日志配置
+    ├── query.py            # 查询辅助函数
+    ├── string.py           # 字符串处理
+    └── time.py             # 时间处理
 ```
 
-## Dependencies
+## 数据模型
 
-See `requirements.txt` for production dependencies and `requirements-dev.txt` for development tools.
+### 核心实体
 
-## Troubleshooting
+#### 1. Vehicle (车辆)
+```python
+class Vehicle:
+    vehicle_plate: str      # 车牌号 (主键)
+    lsp: str               # 物流服务商
+    vehicle_type: str      # 车辆类型
+    driver_name: str       # 司机姓名
+    driver_contact: str    # 司机联系方式
+    arrive_time: datetime  # 到达时间
+    depart_time: datetime  # 离场时间
+    status: str           # 状态 (arrived/departed)
+```
 
-### psycopg2-binary Installation Issues
+#### 2. DN (配送单据)
+```python
+class DN:
+    dn_number: str        # DN号码 (主键)
+    status: str          # 当前状态
+    status_delivery: str # 配送状态 (自动规范化)
+    plan_mos_date: str   # 计划日期 (格式: "01 Jan 25")
+    lsp: str            # 物流服务商
+    region: str         # 区域
+    remark: str         # 备注
+    photo_url: str      # 照片URL
+    lng: str            # 经度
+    lat: str            # 纬度
+    last_updated_by: str # 最后更新人
+    gs_sheet: str       # Google Sheet 名称
+    gs_row: int         # 行号
+    is_deleted: str     # 软删除标记 ("Y"/"N")
+    # ... 动态列支持
+```
 
-If you encounter issues installing `psycopg2-binary` on macOS:
+#### 3. DNRecord (DN历史记录)
+```python
+class DNRecord:
+    id: int              # 记录ID (主键)
+    dn_number: str       # DN号码 (外键)
+    status: str          # 状态
+    remark: str          # 备注
+    photo_url: str       # 照片URL
+    lng: float          # 经度
+    lat: float          # 纬度
+    created_at: datetime # 创建时间
+    updated_by: str     # 更新人
+```
 
-1. **Install PostgreSQL via Homebrew** (provides pg_config):
-   ```bash
-   brew install postgresql
-   ```
+#### 4. StatusDeliveryLspStat (LSP 统计快照)
+```python
+class StatusDeliveryLspStat:
+    id: int              # ID (主键)
+    lsp: str            # 物流服务商
+    total_dn: int       # DN 总数
+    status_not_empty: int # 有状态的 DN 数
+    plan_mos_date: str  # 计划日期
+    recorded_at: datetime # 记录时间
+```
 
-2. **Alternative: Use psycopg3** (modern replacement):
-   ```bash
-   pip install psycopg[binary]
-   ```
+### 数据关系
+- Vehicle: 独立实体，按车牌号管理
+- DN ↔ DNRecord: 一对多关系，DN 为主表，DNRecord 为历史记录
+- StatusDeliveryLspStat: 独立时序数据表，每小时记录一次快照
+- 支持动态列扩展，新增字段会自动同步到数据库和 ORM
 
-3. **For Apple Silicon Macs**, you might need:
-   ```bash
-   brew install libpq
-   export LDFLAGS="-L$(brew --prefix libpq)/lib"
-   export CPPFLAGS="-I$(brew --prefix libpq)/include"
-   pip install psycopg2-binary
-   ```
+### 软删除机制
+- DN 表使用 `is_deleted` 字段实现软删除
+- 默认值为 `"N"` (未删除)
+- 删除时设置为 `"Y"` (已删除)
+- 所有查询自动过滤已删除记录
+- Google Sheets 同步时会自动恢复不在表格中的记录
 
-### Virtual Environment Issues
+## API 接口文档
 
-If pip complains about externally managed environment:
+**完整 API 文档请参考**: [API_REFERENCE.md](./API_REFERENCE.md)
 
+### 接口概览
+
+#### 健康检查
+- `GET /` - 健康检查
+
+#### DN 管理 (21 个接口)
+- `GET /api/dn/list` - DN 列表
+- `GET /api/dn/list/search` - 高级搜索
+- `GET /api/dn/{dn_number}` - 单个查询
+- `GET /api/dn/batch` - 批量查询
+- `GET /api/dn/search` - 简单搜索
+- `POST /api/dn/update` - 更新 DN (支持照片上传)
+- `POST /api/dn/batch_update` - 批量创建
+- `PUT /api/dn/update/{id}` - 编辑记录
+- `DELETE /api/dn/update/{id}` - 删除记录
+- `DELETE /api/dn/{dn_number}` - 软删除 DN
+- `GET /api/dn/records` - 历史记录
+- `GET /api/dn/list/batch` - 批量列表
+- `GET /api/dn/stats/{date}` - 按日期统计
+- `GET /api/dn/status-delivery/stats` - 状态统计 + LSP 汇总
+- `GET /api/dn/status-delivery/lsp-summary-records` - LSP 历史数据
+- `GET /api/dn/filters` - 筛选选项
+- `POST /api/dn/sync` - 手动同步
+- `GET /api/dn/sync/log/latest` - 最新日志
+- `GET /api/dn/sync/log/file` - 日志文件
+- `POST /api/dn/extend` - 扩展列
+- `POST /api/dn/mark` - 归档标记
+
+#### 车辆管理 (4 个接口)
+- `POST /api/vehicle/signin` - 车辆签到
+- `POST /api/vehicle/depart` - 车辆离场
+- `GET /api/vehicle/vehicle` - 单个查询
+- `GET /api/vehicle/vehicles` - 列表查询
+
+### 重要特性
+
+#### Status Delivery 规范化
+
+所有 `status_delivery` 值会自动规范化为标准格式:
+
+| 输入 | 输出 |
+|------|------|
+| `"on the way"` / `"ON THE WAY"` / `"On The Way"` | `"On the way"` |
+| `"prepare vehicle"` / `"PREPARE VEHICLE"` | `"Prepare Vehicle"` |
+| `"on site"` / `"ON SITE"` | `"On Site"` |
+| `"pod"` / `"POD"` | `"POD"` |
+
+**标准状态值**:
+- `Prepare Vehicle`
+- `On the way` ⚠️ (注意: 小写 "w")
+- `On Site`
+- `POD`
+- `Waiting PIC Feedback`
+- `RePlan MOS due to LSP Delay`
+- `RePlan MOS Project`
+- `Cancel MOS`
+- `Close by RN`
+- `No Status` (空值默认)
+
+## 核心业务流程
+
+### 1. 数据同步流程
+```
+Google Sheets → 数据抓取 → 格式化 → 数据库比对 → 更新/插入 → 日志记录
+```
+
+**关键步骤**:
+1. 读取 Google Sheets 中的 "Plan MOS" 工作表
+2. 数据标准化和清洗
+3. 与数据库现有数据进行比对
+4. 执行增量更新或插入操作
+5. 记录同步日志和统计信息
+
+### 2. 车辆管理流程
+```
+车辆到达 → 签到登记 → 状态跟踪 → 完成离场 → 记录更新
+```
+
+### 3. DN 状态更新流程
+```
+状态变更 → 历史记录创建 → 主表更新 → Sheet 同步 → 通知反馈
+```
+
+## 定时任务
+
+系统使用 APScheduler 管理定时任务。
+
+### 同步任务
+- **任务ID**: `dn_sheet_sync`
+- **频率**: 每 5 分钟 (300 秒)
+- **触发器**: `IntervalTrigger`
+- **功能**: 自动同步 Google Sheets 数据到数据库
+- **入口**: `scheduled_dn_sheet_sync()`
+- **首次执行**: 应用启动后 5 秒
+
+**同步流程**:
+1. 读取所有 "Plan MOS" 工作表
+2. 数据清洗和规范化
+3. 去重 (保留最后一条)
+4. 与数据库比对
+5. 增量更新 (created/updated)
+6. 软删除不在表格中的 DN
+7. 规范化 `plan_mos_date` 和 `status_delivery` 字段
+
+### 统计任务
+- **任务ID**: `status_delivery_lsp_summary`
+- **频率**: 每小时整点
+- **触发器**: `CronTrigger(minute=0)`
+- **功能**: 捕获 LSP 汇总统计快照
+- **入口**: `scheduled_status_delivery_lsp_summary_capture()`
+
+**统计内容**:
+- 每个 LSP 的 DN 总数
+- 每个 LSP 有状态的 DN 数
+- 按 `plan_mos_date` 分组
+- 记录时间戳 (雅加达时区)
+
+## 配置管理
+
+### 环境变量
 ```bash
-# Create and use a virtual environment
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# 数据库配置
+DATABASE_URL=postgresql://user:password@host:port/database
 
-# Or use --break-system-packages (not recommended for production)
-pip install -r requirements.txt --break-system-packages
+# Google Sheets API
+GOOGLE_SERVICE_ACCOUNT_FILE=path/to/service-account.json
+GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
+
+# 文件存储 (AWS S3)
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_S3_BUCKET=your_bucket_name
+AWS_S3_REGION=your_region
+
+# 应用配置
+ALLOWED_ORIGINS=http://localhost:3000,https://your-domain.com
 ```
 
-### Python Version Compatibility
+### 配置类
+所有配置通过 `app/settings.py` 中的 `Settings` 类统一管理，支持环境变量和默认值。
 
-- **Recommended**: Python 3.11 or 3.12
-- **Python 3.13**: Some packages may have compatibility issues
-- If using Python 3.13, consider using Python 3.12 instead:
-  ```bash
-  pyenv install 3.12.7
-  pyenv local 3.12.7
-  ```
+## 部署说明
+
+### Docker 部署
+```bash
+# 构建镜像
+docker build -t jakarta-backend .
+
+# 运行容器
+docker run -d \
+  --name jakarta-backend \
+  -p 8000:8000 \
+  -e DATABASE_URL=your_database_url \
+  -e GOOGLE_SERVICE_ACCOUNT_FILE=your_service_account_file \
+  jakarta-backend
+```
+
+### 依赖要求
+详见 `requirements.txt`，主要依赖包括:
+- `fastapi`: Web 框架
+- `sqlalchemy`: ORM
+- `psycopg2-binary`: PostgreSQL 驱动
+- `gspread`: Google Sheets API 客户端
+- `boto3`: AWS SDK
+- `pandas`: 数据处理
+
+## 开发指南
+
+### 本地开发环境设置
+1. 安装 Python 3.13+
+2. 创建虚拟环境: `python -m venv .venv`
+3. 激活虚拟环境: `source .venv/bin/activate` (macOS/Linux) 或 `.venv\Scripts\activate` (Windows)
+4. 安装依赖: `pip install -r requirements.txt`
+5. 配置环境变量 (复制 `.env.example` 为 `.env`)
+6. 运行数据库迁移 (自动在启动时执行)
+7. 运行应用: `uvicorn app.main:app --reload --port 10000`
+
+### 测试
+```bash
+# 运行所有测试
+pytest tests/ -v
+
+# 运行特定测试文件
+pytest tests/test_status_delivery_stats.py -v
+
+# 运行特定测试
+pytest tests/test_vehicle_crud.py::test_vehicle_signin_and_fetch -v
+
+# 查看测试覆盖率
+pytest --cov=app tests/
+
+# 生成 HTML 覆盖率报告
+pytest --cov=app --cov-report=html tests/
+```
+
+**测试文件**:
+- `test_status_delivery_stats.py` - DN 状态统计测试 (6 个测试)
+- `test_status_delivery_normalization.py` - 状态规范化测试 (3 个测试)
+- `test_vehicle_crud.py` - 车辆 CRUD 测试 (2 个测试)
+- `test_date_range.py` - 日期范围测试 (3 个测试)
+- `test_plan_mos_archiving_regression.py` - 归档功能测试 (1 个测试)
+
+### 代码规范
+- 使用 Python 类型注解
+- 遵循 PEP 8 代码风格
+- 函数和类需要添加文档字符串
+- 关键业务逻辑需要编写单元测试
+
+## 故障排查
+
+### 常见问题
+
+#### 1. 数据库连接问题
+- 检查 `DATABASE_URL` 配置
+- 确认数据库服务状态
+- 验证网络连接和防火墙设置
+
+#### 2. Google Sheets 同步失败
+- 验证 Service Account 凭证
+- 检查 Spreadsheet ID 是否正确
+- 确认 API 配额限制
+
+#### 3. 文件上传问题
+- 检查 S3 配置和权限
+- 验证本地存储路径权限
+- 查看文件大小限制
+
+### 日志查看
+- 应用日志: 通过 uvicorn 输出
+- 同步日志: 通过 `/api/dn/sync/log/file` 下载
+- 数据库日志: 查看 PostgreSQL 日志
+
+
+
+
+*本文档最后更新时间: 2025-01-01*
