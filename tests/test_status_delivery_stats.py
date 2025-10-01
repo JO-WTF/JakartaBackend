@@ -238,7 +238,7 @@ def test_search_dn_list_excludes_deleted(db_session):
         lsp="Removed",
         plan_mos_date="01 Jan 25",
         status="On Hold",
-        status_delivery="On The Way",
+        status_delivery="On the way",
         is_deleted="Y",
     )
     db_session.commit()

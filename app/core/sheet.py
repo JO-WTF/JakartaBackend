@@ -140,6 +140,10 @@ def sync_delivery_status_to_sheet(
     new_value: str,
 ) -> dict[str, Any] | None:
     """Write delivery status back to Google Sheet for a DN entry."""
+    # Normalize status_delivery values for Google Sheet format
+    if new_value == "On The Way":
+        new_value = "On the way"
+    
     column_names = get_sheet_columns()
 
     try:

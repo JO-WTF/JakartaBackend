@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadF
 from sqlalchemy.orm import Session
 
 from app.core.sheet import sync_delivery_status_to_sheet
-from app.core.sync import DN_RE, VALID_STATUSES
+from app.core.sync import DN_RE, VALID_STATUSES, _normalize_status_delivery_value
 from app.crud import (
     add_dn_record,
     delete_dn,
@@ -61,7 +61,12 @@ def update_dn(
     delivery_status_value = (delivery_status_raw or "").strip() or None
 
     if delivery_status_value is None:
-        delivery_status_value = "On Site" if status == "ARRIVED AT SITE" else "On The Way"
+        delivery_status_value = "On Site" if status == "ARRIVED AT SITE" else "On the way"
+    else:
+        # 规范化用户输入
+        delivery_status_value = _normalize_status_delivery_value(delivery_status_value)
+        if delivery_status_value is None:
+            delivery_status_value = "No Status"
 
     existing_dn = db.query(DN).filter(DN.dn_number == dn_number).filter(_ACTIVE_DN_EXPR).one_or_none()
     gs_sheet_name = existing_dn.gs_sheet if existing_dn is not None else None

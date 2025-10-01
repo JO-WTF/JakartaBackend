@@ -72,7 +72,7 @@ VEHICLE_VALID_STATUSES: tuple[str, ...] = ("arrived", "departed")
 
 STANDARD_STATUS_DELIVERY_VALUES: tuple[str, ...] = (
     "Prepare Vehicle",
-    "On The Way",
+    "On the way",
     "On Site",
     "POD",
     "Waiting PIC Feedback",
@@ -88,6 +88,7 @@ _STATUS_DELIVERY_LOOKUP: dict[str, str] = {
 _STATUS_DELIVERY_LOOKUP.update({
     "close by rn": "Close by RN",
     "no status": "No Status",
+    "on the way": "On the way",  # Ensure consistent capitalization
 })
 
 
