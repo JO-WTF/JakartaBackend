@@ -7,7 +7,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.core.sheet import sync_delivery_status_to_sheet
+from app.core.sheet import sync_delivery_status_to_sheet, sync_status_timestamp_to_sheet
 from app.core.sync import DN_RE, VALID_STATUSES, _normalize_status_delivery_value
 from app.crud import (
     add_dn_record,
@@ -108,18 +108,25 @@ def update_dn(
     )
 
     gspread_update_result: dict[str, Any] | None = None
+    gspread_timestamp_result: dict[str, Any] | None = None
     should_check_sheet = (
         gs_sheet_name and isinstance(gs_row_index, int) and gs_row_index > 0 and delivery_status_value is not None
     )
 
     if should_check_sheet:
         gspread_update_result = sync_delivery_status_to_sheet(
-            gs_sheet_name, gs_row_index, dn_number, delivery_status_value
+            gs_sheet_name, gs_row_index, dn_number, delivery_status_value, updated_by_value
+        )
+        # Write timestamp to R or S column based on status
+        gspread_timestamp_result = sync_status_timestamp_to_sheet(
+            gs_sheet_name, gs_row_index, dn_number, status, updated_by_value
         )
 
     response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}
     if gspread_update_result is not None:
         response["delivery_status_update_result"] = gspread_update_result
+    if gspread_timestamp_result is not None:
+        response["timestamp_update_result"] = gspread_timestamp_result
     return response
 
 

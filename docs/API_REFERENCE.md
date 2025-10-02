@@ -47,7 +47,7 @@ JakartaBackend 提供 RESTful API 用于物流配送单据 (DN) 管理和车辆�
 
 ### Status Delivery 规范化
 
-从 v1.1.0 开始，所有 `status_delivery` 值会自动规范化为标准格式:
+所有 `status_delivery` 值会自动规范化为标准格式:
 
 | 输入 (任意大小写) | 规范化输出 |
 |------------------|-----------|
@@ -292,14 +292,38 @@ Status: 404
     "sheet": "Plan MOS 2025",
     "row": 10,
     "updated": true
+  },
+  "timestamp_update_result": {
+    "sheet": "Plan MOS 2025",
+    "row": 10,
+    "column": 19,
+    "column_name": "actual_arrive_time_ata",
+    "new_value": "10/2/2025 7:10:00",
+    "status": "ARRIVED AT SITE",
+    "updated": true
   }
 }
 ```
+
+**响应字段说明**:
+- `delivery_status_update_result`: 配送状态同步结果
+- `timestamp_update_result`: 时间戳写入结果
+  - `column`: 列位置 (18 = R列, 19 = S列)
+  - `column_name`: 列名称
+  - `new_value`: 写入的时间戳值
+  - `status`: 触发写入的状态
 
 **说明**:
 - 自动创建 DN 记录历史
 - 如果提供坐标和照片,同时存储
 - 如果 DN 在 Google Sheets 中,自动同步 `status_delivery` 回表格
+- 自动写入时间戳到 Google Sheet:
+  - 当状态为 `ARRIVED AT SITE` (不区分大小写) 时,写入当前时间到 **S 列** (`actual_arrive_time_ata`)
+  - 当状态为其他值时,写入当前时间到 **R 列** (`actual_depart_from_start_point_atd`)
+  - 时间格式: `M/D/YYYY H:MM:SS` (GMT+7),例如: `10/2/2025 7:10:00`
+- 所有修改的单元格会自动添加:
+  - 备注: "Modified by Fast Tracker ({updated_by})" （显示操作者名称）
+  - 链接: https://idnsc.dpdns.org/admin
 
 ---
 

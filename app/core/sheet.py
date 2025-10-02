@@ -7,6 +7,7 @@ from functools import lru_cache
 from time import perf_counter
 from typing import Any, List
 
+import gspread.utils
 import pandas as pd
 
 from app.core.google import SPREADSHEET_URL, create_gspread_client
@@ -34,6 +35,7 @@ __all__ = [
     "process_all_sheets",
     "normalize_sheet_value",
     "sync_delivery_status_to_sheet",
+    "sync_status_timestamp_to_sheet",
     "mark_plan_mos_rows_for_archiving",
     "ARCHIVE_TEXT_COLOR",
     "DEFAULT_ARCHIVE_THRESHOLD_DAYS",
@@ -138,6 +140,7 @@ def sync_delivery_status_to_sheet(
     row_index: int,
     dn_number: str,
     new_value: str,
+    updated_by: str | None = None,
 ) -> dict[str, Any] | None:
     """Write delivery status back to Google Sheet for a DN entry."""
     # Normalize status_delivery values for Google Sheet format
@@ -228,6 +231,20 @@ def sync_delivery_status_to_sheet(
 
             try:
                 worksheet.update_cell(found_row_index, status_column_position, new_value)
+                # Add note and hyperlink to the modified cell
+                try:
+                    cell_address = gspread.utils.rowcol_to_a1(found_row_index, status_column_position)
+                    # Add note
+                    note_text = f"Modified by Fast Tracker ({updated_by})" if updated_by else "Modified by Fast Tracker"
+                    worksheet.insert_note(cell_address, note_text)
+                    # Add hyperlink
+                    worksheet.format(cell_address, {
+                        "textFormat": {
+                            "link": {"uri": "https://idnsc.dpdns.org/admin"}
+                        }
+                    })
+                except Exception as note_exc:  # pragma: no cover - gspread errors
+                    update_details["note_error"] = str(note_exc)
             except Exception as update_exc:  # pragma: no cover - gspread errors
                 update_details["update_error"] = str(update_exc)
                 return update_details
@@ -263,12 +280,158 @@ def sync_delivery_status_to_sheet(
 
     try:
         worksheet.update_cell(row_index, status_column_position, new_value)
+        # Add note and hyperlink to the modified cell
+        try:
+            cell_address = gspread.utils.rowcol_to_a1(row_index, status_column_position)
+            # Add note
+            note_text = f"Modified by Fast Tracker ({updated_by})" if updated_by else "Modified by Fast Tracker"
+            worksheet.insert_note(cell_address, note_text)
+            # Add hyperlink
+            worksheet.format(cell_address, {
+                "textFormat": {
+                    "link": {"uri": "https://idnsc.dpdns.org/admin"}
+                }
+            })
+        except Exception as note_exc:  # pragma: no cover - gspread errors
+            update_details["note_error"] = str(note_exc)
     except Exception as update_exc:  # pragma: no cover - gspread errors
         update_details["update_error"] = str(update_exc)
         return update_details
 
     update_details["updated"] = True
     return update_details
+
+
+def sync_status_timestamp_to_sheet(
+    sheet_name: str,
+    row_index: int,
+    dn_number: str,
+    status: str,
+    updated_by: str | None = None,
+) -> dict[str, Any] | None:
+    """Write timestamp to R or S column based on status.
+    
+    If status is 'ARRIVED AT SITE' (case-insensitive), write to column S (actual_arrive_time_ata).
+    Otherwise, write to column R (actual_depart_from_start_point_atd).
+    
+    Timestamp format: M/D/YYYY H:MM:SS in GMT+7 timezone.
+    """
+    # Determine target column based on status
+    status_upper = status.strip().upper()
+    is_arrived = status_upper == "ARRIVED AT SITE"
+    
+    target_column_name = "actual_arrive_time_ata" if is_arrived else "actual_depart_from_start_point_atd"
+    
+    # Get current time in GMT+7 and format it
+    now_gmt7 = datetime.now(TZ_GMT7)
+    # Format: M/D/YYYY H:MM:SS (no leading zeros for month and day)
+    timestamp_str = f"{now_gmt7.month}/{now_gmt7.day}/{now_gmt7.year} {now_gmt7.hour}:{now_gmt7.minute:02d}:{now_gmt7.second:02d}"
+    
+    column_names = get_sheet_columns()
+    
+    try:
+        target_column_position = column_names.index(target_column_name) + 1
+    except ValueError:
+        return {
+            "sheet": sheet_name,
+            "row": row_index,
+            "column_name": target_column_name,
+            "error": f"{target_column_name} column not found in sheet definition",
+            "new_value": timestamp_str,
+            "status": status,
+        }
+    
+    try:
+        dn_column_position = column_names.index("dn_number") + 1
+    except ValueError:
+        return {
+            "sheet": sheet_name,
+            "row": row_index,
+            "column_name": "dn_number",
+            "error": "dn_number column not found in sheet definition",
+            "new_value": timestamp_str,
+            "status": status,
+        }
+    
+    try:
+        gc = create_gspread_client()
+        sh = gc.open_by_url(SPREADSHEET_URL)
+        worksheet = sh.worksheet(sheet_name)
+        dn_cell_value = worksheet.cell(row_index, dn_column_position).value
+        normalized_sheet_dn = normalize_dn(dn_cell_value or "")
+        
+        # Verify DN number matches
+        if normalized_sheet_dn != dn_number:
+            # Try to find the correct row
+            search_details: dict[str, Any] = {
+                "sheet": sheet_name,
+                "row": row_index,
+                "column": target_column_position,
+                "column_name": target_column_name,
+                "current_dn_number": dn_cell_value,
+                "expected_dn_number": dn_number,
+                "error": "dn_number mismatch for target row",
+                "new_value": timestamp_str,
+                "status": status,
+            }
+            
+            try:
+                dn_column_values = worksheet.col_values(dn_column_position)
+            except Exception as search_exc:
+                search_details["search_error"] = str(search_exc)
+                return search_details
+            
+            found_row_index: int | None = None
+            for idx, value in enumerate(dn_column_values, start=1):
+                if normalize_dn(value or "") == dn_number:
+                    found_row_index = idx
+                    break
+            
+            if found_row_index is None:
+                search_details["search_result"] = "dn_number not found in sheet"
+                return search_details
+            
+            # Update with found row
+            row_index = found_row_index
+        
+        # Write timestamp to target column
+        worksheet.update_cell(row_index, target_column_position, timestamp_str)
+        
+        # Add note and hyperlink to the modified cell
+        try:
+            cell_address = gspread.utils.rowcol_to_a1(row_index, target_column_position)
+            # Add note
+            note_text = f"Modified by Fast Tracker ({updated_by})" if updated_by else "Modified by Fast Tracker"
+            worksheet.insert_note(cell_address, note_text)
+            # Add hyperlink
+            worksheet.format(cell_address, {
+                "textFormat": {
+                    "link": {"uri": "https://idnsc.dpdns.org/admin"}
+                }
+            })
+        except Exception:  # pragma: no cover - gspread errors
+            pass  # Don't fail the update if note/link fails
+        
+        return {
+            "sheet": sheet_name,
+            "row": row_index,
+            "column": target_column_position,
+            "column_name": target_column_name,
+            "new_value": timestamp_str,
+            "status": status,
+            "updated": True,
+        }
+        
+    except Exception as exc:
+        return {
+            "sheet": sheet_name,
+            "row": row_index,
+            "column": target_column_position,
+            "column_name": target_column_name,
+            "error": str(exc),
+            "new_value": timestamp_str,
+            "status": status,
+        }
 
 
 def mark_plan_mos_rows_for_archiving(threshold_days: int | None = None) -> dict[str, Any]:

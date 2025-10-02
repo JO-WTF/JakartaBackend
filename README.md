@@ -12,6 +12,7 @@ JakartaBackend 是一个基于 FastAPI 构建的物流管理系统后端服务�
 - **文件管理**: 照片等附件的上传和存储 (S3/本地)
 - **状态规范化**: 自动规范化 status_delivery 值为标准格式
 - **时区支持**: 统一使用雅加达时区 (GMT+7)
+- **智能时间戳**: 根据状态自动写入时间戳到 Google Sheet
 
 ## 技术架构
 
@@ -254,8 +255,14 @@ Google Sheets → 数据抓取 → 格式化 → 数据库比对 → 更新/插�
 
 ### 3. DN 状态更新流程
 ```
-状态变更 → 历史记录创建 → 主表更新 → Sheet 同步 → 通知反馈
+状态变更 → 历史记录创建 → 主表更新 → Sheet 同步 → 时间戳写入 → 通知反馈
 ```
+
+**时间戳写入规则**:
+- 状态为 `ARRIVED AT SITE` (不区分大小写) → 写入 S 列 (`actual_arrive_time_ata`)
+- 其他状态 → 写入 R 列 (`actual_depart_from_start_point_atd`)
+- 时间格式: `M/D/YYYY H:MM:SS` (GMT+7)
+- 详细说明: [TIMESTAMP_FEATURE.md](./docs/TIMESTAMP_FEATURE.md)
 
 ## 定时任务
 
@@ -375,6 +382,7 @@ pytest --cov=app --cov-report=html tests/
 - `test_vehicle_crud.py` - 车辆 CRUD 测试 (2 个测试)
 - `test_date_range.py` - 日期范围测试 (3 个测试)
 - `test_plan_mos_archiving_regression.py` - 归档功能测试 (1 个测试)
+- `test_timestamp_update.py` - 时间戳更新测试 (4 个测试)
 
 ### 代码规范
 - 使用 Python 类型注解
