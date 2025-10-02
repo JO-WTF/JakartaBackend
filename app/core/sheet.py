@@ -311,16 +311,28 @@ def sync_status_timestamp_to_sheet(
 ) -> dict[str, Any] | None:
     """Write timestamp to R or S column based on status.
     
-    If status is 'ARRIVED AT SITE' (case-insensitive), write to column S (actual_arrive_time_ata).
-    Otherwise, write to column R (actual_depart_from_start_point_atd).
+    Status mapping rules:
+    - If status is 'ARRIVED AT XD/PM' or 'ARRIVED AT SITE': write to column S (actual_arrive_time_ata)
+    - If status is 'TRANSPORTING FROM WH' or 'TRANSPORTING FROM XD/PM': write to column R (actual_depart_from_start_point_atd)
+    - For other statuses: no timestamp is written
     
     Timestamp format: M/D/YYYY H:MM:SS in GMT+7 timezone.
     """
     # Determine target column based on status
     status_upper = status.strip().upper()
-    is_arrived = status_upper == "ARRIVED AT SITE"
     
-    target_column_name = "actual_arrive_time_ata" if is_arrived else "actual_depart_from_start_point_atd"
+    # Define status groups
+    arrival_statuses = {"ARRIVED AT XD/PM", "ARRIVED AT SITE"}
+    departure_statuses = {"TRANSPORTING FROM WH", "TRANSPORTING FROM XD/PM"}
+    
+    # Check which column to update
+    if status_upper in arrival_statuses:
+        target_column_name = "actual_arrive_time_ata"  # Column S
+    elif status_upper in departure_statuses:
+        target_column_name = "actual_depart_from_start_point_atd"  # Column R
+    else:
+        # Status doesn't require timestamp update
+        return None
     
     # Get current time in GMT+7 and format it
     now_gmt7 = datetime.now(TZ_GMT7)
