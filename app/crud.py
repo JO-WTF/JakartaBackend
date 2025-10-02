@@ -753,8 +753,9 @@ def get_dn_status_delivery_lsp_counts(
 ) -> List[tuple[str, int, int]]:
     """Return DN counts grouped by LSP with totals and non-empty status counts.
 
-    Note: total_count now includes only DNs with status_delivery in
-    ['On the way', 'On Site', 'POD'] (case-insensitive).
+    Note: Both total_count and status_not_empty_count include only DNs with
+    status_delivery in ['On the way', 'On Site', 'POD'] (case-insensitive).
+    status_not_empty_count further filters for non-empty status field.
     """
 
     lsp_expr = func.coalesce(func.nullif(func.trim(DN.lsp), ""), "NO LSP")
@@ -774,11 +775,25 @@ def get_dn_status_delivery_lsp_counts(
         else_=None
     )
 
+    # Build case expression to count only target statuses with non-empty status
+    status_trimmed = func.trim(DN.status)
+    status_not_empty_case = case(
+        *[
+            (
+                (func.lower(status) == status_delivery_lower) &
+                (func.coalesce(status_trimmed, "") != ""),
+                1
+            )
+            for status in target_statuses
+        ],
+        else_=None
+    )
+
     query = (
         db.query(
             lsp_expr.label("lsp"),
             func.count(count_case).label("total_count"),
-            func.count(func.nullif(func.trim(DN.status), "")).label("status_not_empty_count"),
+            func.count(status_not_empty_case).label("status_not_empty_count"),
         )
         .filter(_ACTIVE_DN_EXPR)
     )
