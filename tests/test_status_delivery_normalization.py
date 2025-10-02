@@ -5,6 +5,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("STORAGE_DISK_PATH", "./data/uploads")
 
 from app.core.sync import _normalize_status_delivery_value  # noqa: E402
+from app.api.dn.update import _derive_status_delivery_from_status  # noqa: E402
 
 
 def test_normalize_status_delivery_value():
@@ -115,3 +116,12 @@ def test_normalization_handles_edge_cases():
         # 小写版本应该被规范化回标准格式
         normalized = _normalize_status_delivery_value(value.lower())
         assert normalized == value, f"'{value.lower()}' should normalize to '{value}', got '{normalized}'"
+
+
+def test_auto_status_delivery_mapping_from_status():
+    assert _derive_status_delivery_from_status("ARRIVED AT SITE") == "On Site"
+    assert _derive_status_delivery_from_status("POD") == "POD"
+    assert _derive_status_delivery_from_status("ON THE WAY") == "On the way"
+    assert _derive_status_delivery_from_status("TRANSPORTING FROM WH") == "On the way"
+    assert _derive_status_delivery_from_status("ARRIVED AT WH") is None
+    assert _derive_status_delivery_from_status("") is None

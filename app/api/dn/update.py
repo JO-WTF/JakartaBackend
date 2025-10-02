@@ -27,6 +27,21 @@ from app.utils.string import normalize_dn
 router = APIRouter(prefix="/api/dn")
 
 
+def _derive_status_delivery_from_status(status: str) -> str | None:
+    """Return the inferred status_delivery value for a DN status."""
+
+    normalized = (status or "").strip().upper()
+    if normalized == "ARRIVED AT SITE":
+        return "On Site"
+    if normalized == "POD":
+        return "POD"
+    if normalized == "ARRIVED AT WH":
+        return None
+    if not normalized:
+        return None
+    return "On the way"
+
+
 @router.post("/update")
 def update_dn(
     dnNumber: str = Form(...),
@@ -62,12 +77,7 @@ def update_dn(
     delivery_status_value = (delivery_status_raw or "").strip() or None
 
     if delivery_status_value is None:
-        if status == "ARRIVED AT SITE":
-            delivery_status_value = "On Site"
-        elif status == "POD":
-            delivery_status_value = "POD"
-        else:
-            delivery_status_value = "On the way"
+        delivery_status_value = _derive_status_delivery_from_status(status)
     else:
         # 规范化用户输入
         delivery_status_value = _normalize_status_delivery_value(delivery_status_value)
