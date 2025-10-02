@@ -119,8 +119,8 @@ def get_sheet_columns() -> List[str]:
     return SHEET_BASE_COLUMNS + list(_dynamic_columns)
 
 
-def get_mutable_dn_columns() -> List[str]:
-    ensure_dynamic_columns_loaded()
+def get_mutable_dn_columns(bind: Engine | Session | None = None) -> List[str]:
+    ensure_dynamic_columns_loaded(bind)
     allowed = [
         column
         for column in list(_BASE_DN_COLUMN_SET | set(_dynamic_columns))

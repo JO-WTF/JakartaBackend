@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_, case
 from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat
-from .dn_columns import filter_assignable_dn_fields
+from .dn_columns import (
+    filter_assignable_dn_fields,
+    ensure_dynamic_columns_loaded,
+    get_mutable_dn_columns,
+)
 
 
 _ACTIVE_DN_EXPR = func.coalesce(DN.is_deleted, "N") == "N"
@@ -128,7 +132,9 @@ def list_vehicles(
 
 
 def ensure_dn(db: Session, dn_number: str, **fields: Any) -> DN:
-    assignable = filter_assignable_dn_fields(fields)
+    ensure_dynamic_columns_loaded(db)
+    allowed_columns = get_mutable_dn_columns(db)
+    assignable = filter_assignable_dn_fields(fields, allowed_columns=allowed_columns)
     # Exclude is_deleted from non_null_assignable to avoid conflicts
     # since we explicitly set it in the constructor
     non_null_assignable = {

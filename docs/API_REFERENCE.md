@@ -351,6 +351,7 @@ Status: 404
     - `TRANSPORTING FROM XD/PM` - 从 XD/PM 出发
   - 其他状态（如 `POD`、`ON THE WAY` 等）不会触发时间戳写入
   - 时间格式: `M/D/YYYY H:MM:SS` (GMT+7),例如: `10/2/2025 7:10:00`
+  - 同步逻辑也会将相同时间戳写入数据库字段 `actual_depart_from_start_point_atd` / `actual_arrive_time_ata`
   - 状态匹配不区分大小写
 - 所有修改的单元格会自动添加:
   - 备注: "Modified by Fast Tracker ({updated_by})" （显示操作者名称）

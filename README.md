@@ -270,6 +270,7 @@ Google Sheets → 数据抓取 → 格式化 → 数据库比对 → 更新/插�
   - `TRANSPORTING FROM XD/PM` - 从 XD/PM 出发
 - **其他状态**: 不写入时间戳 (如 `POD`, `ON THE WAY` 等)
 - 时间格式: `M/D/YYYY H:MM:SS` (GMT+7)
+- 同步逻辑也会将相同时间戳写入数据库字段 `actual_depart_from_start_point_atd` / `actual_arrive_time_ata`
 - 状态匹配不区分大小写
 - 详细说明: [API_REFERENCE.md](./docs/API_REFERENCE.md)
 

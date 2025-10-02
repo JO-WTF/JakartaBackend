@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from typing import Any, List, Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.constants import DN_RE, VALID_STATUSES
+from app.constants import (
+    DN_RE,
+    VALID_STATUSES,
+    ARRIVAL_STATUSES,
+    DEPARTURE_STATUSES,
+)
 from app.core.sheet import sync_delivery_status_to_sheet, sync_status_timestamp_to_sheet
 from app.core.sync import _normalize_status_delivery_value
 from app.crud import (
@@ -23,6 +29,7 @@ from app.db import get_db
 from app.models import DN
 from app.storage import save_file
 from app.utils.string import normalize_dn
+from app.utils.time import TZ_GMT7
 
 router = APIRouter(prefix="/api/dn")
 
@@ -40,6 +47,11 @@ def _derive_status_delivery_from_status(status: str) -> str | None:
     if not normalized:
         return None
     return "On the way"
+
+
+def _current_timestamp_gmt7() -> str:
+    now = datetime.now(TZ_GMT7)
+    return f"{now.month}/{now.day}/{now.year} {now.hour}:{now.minute:02d}:{now.second:02d}"
 
 
 @router.post("/update")
@@ -109,6 +121,15 @@ def update_dn(
         ensure_payload["status_delivery"] = delivery_status_value
     if updated_by_value is not None:
         ensure_payload["last_updated_by"] = updated_by_value
+
+    status_upper = (status or "").strip().upper()
+    timestamp_value: str | None = None
+    if status_upper in ARRIVAL_STATUSES or status_upper in DEPARTURE_STATUSES:
+        timestamp_value = _current_timestamp_gmt7()
+    if status_upper in ARRIVAL_STATUSES and timestamp_value is not None:
+        ensure_payload["actual_arrive_time_ata"] = timestamp_value
+    if status_upper in DEPARTURE_STATUSES and timestamp_value is not None:
+        ensure_payload["actual_depart_from_start_point_atd"] = timestamp_value
 
     ensure_dn(db, dn_number, **ensure_payload)
 

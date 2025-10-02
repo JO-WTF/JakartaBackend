@@ -4,6 +4,10 @@ import os
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 # Set required environment variables before importing app modules
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test?sslmode=require")
 os.environ.setdefault("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS", "{}")
@@ -11,6 +15,23 @@ os.environ.setdefault("STORAGE_DISK_PATH", "/tmp/test_uploads")
 
 from app.core.sheet import sync_status_timestamp_to_sheet  # noqa: E402
 from app.utils.time import TZ_GMT7  # noqa: E402
+from app.db import Base  # noqa: E402
+from app.models import DN  # noqa: E402
+from app.api.dn.update import update_dn  # noqa: E402
+from app.dn_columns import ensure_dynamic_columns_loaded  # noqa: E402
+
+
+@pytest.fixture
+def db_session():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    session = TestingSessionLocal()
+    ensure_dynamic_columns_loaded(session)
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 class TestTimestampUpdate:
@@ -254,3 +275,49 @@ class TestTimestampUpdate:
             status="transporting from wh"
         )
         assert result4.get("column_name") == "actual_depart_from_start_point_atd"
+
+    @patch("app.api.dn.update.datetime")
+    def test_update_dn_sets_arrival_timestamp_in_db(self, mock_datetime, db_session):
+        fixed_time = datetime(2025, 10, 2, 7, 10, 0, tzinfo=TZ_GMT7)
+        mock_datetime.now.return_value = fixed_time
+
+        response = update_dn(
+            dnNumber="DN001",
+            status="ARRIVED AT SITE",
+            delivery_status="On Site",
+            remark=None,
+            photo=None,
+            lng=None,
+            lat=None,
+            updated_by="tester",
+            db=db_session,
+        )
+
+        assert response["ok"] is True
+
+        stored = db_session.query(DN).filter(DN.dn_number == "DN001").one()
+        assert stored.actual_arrive_time_ata == "10/2/2025 7:10:00"
+        assert stored.actual_depart_from_start_point_atd is None
+
+    @patch("app.api.dn.update.datetime")
+    def test_update_dn_sets_departure_timestamp_in_db(self, mock_datetime, db_session):
+        fixed_time = datetime(2025, 11, 3, 14, 5, 3, tzinfo=TZ_GMT7)
+        mock_datetime.now.return_value = fixed_time
+
+        response = update_dn(
+            dnNumber="DN002",
+            status="TRANSPORTING FROM WH",
+            delivery_status="On the way",
+            remark=None,
+            photo=None,
+            lng=None,
+            lat=None,
+            updated_by="tester",
+            db=db_session,
+        )
+
+        assert response["ok"] is True
+
+        stored = db_session.query(DN).filter(DN.dn_number == "DN002").one()
+        assert stored.actual_depart_from_start_point_atd == "11/3/2025 14:05:03"
+        assert stored.actual_arrive_time_ata is None
