@@ -14,6 +14,8 @@ __all__ = [
     "StatusDeliveryLspSummary",
     "StatusDeliveryStatsResponse",
     "StatusDeliveryLspSummaryRecord",
+    "StatusDeliveryLspUpdateRecord",
+    "StatusDeliveryLspSummaryHistoryData",
     "StatusDeliveryLspSummaryHistoryResponse",
 ]
 
@@ -71,8 +73,25 @@ class StatusDeliveryLspSummaryRecord(BaseModel):
     )
 
 
+class StatusDeliveryLspUpdateRecord(BaseModel):
+    id: int = Field(..., description="Sequential identifier for the aggregated update row")
+    lsp: str = Field(..., description="Logistics service provider label")
+    updated_dn: int = Field(..., ge=0, description="Cumulative DN count up to the captured hour")
+    update_date: str = Field(..., description="Local Jakarta date for the update bucket")
+    recorded_at: str = Field(..., description="Localized hour bucket in Jakarta time (YYYY-MM-DD HH:mm:ss)")
+
+
+class StatusDeliveryLspSummaryHistoryData(BaseModel):
+    by_plan_mos_date: List[StatusDeliveryLspSummaryRecord] = Field(
+        ..., description="Snapshot records grouped by Plan MOS date"
+    )
+    by_update_date: List[StatusDeliveryLspUpdateRecord] = Field(
+        ..., description="Cumulative DN counts grouped by update hour"
+    )
+
+
 class StatusDeliveryLspSummaryHistoryResponse(BaseModel):
     ok: bool = Field(True, description="Whether the request succeeded")
-    data: List[StatusDeliveryLspSummaryRecord] = Field(
-        ..., description="Historical status-delivery LSP summary snapshots"
+    data: StatusDeliveryLspSummaryHistoryData = Field(
+        ..., description="Historical status-delivery data broken down by Plan MOS date and update hour"
     )

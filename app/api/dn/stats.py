@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Optional
+from collections import Counter
+from datetime import datetime, timezone, date
+from typing import Any, Optional, Sequence
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from app.crud import (
     get_dn_status_delivery_counts,
     get_dn_status_delivery_lsp_counts,
     get_dn_unique_field_values,
+    get_dn_latest_update_snapshots,
     list_status_delivery_lsp_stats,
 )
 from app.db import get_db
@@ -20,9 +22,12 @@ from app.schemas.dn import (
     StatusDeliveryLspSummary,
     StatusDeliveryStatsResponse,
     StatusDeliveryLspSummaryRecord,
+    StatusDeliveryLspSummaryHistoryData,
     StatusDeliveryLspSummaryHistoryResponse,
+    StatusDeliveryLspUpdateRecord,
 )
 from app.constants import STANDARD_STATUS_DELIVERY_VALUES
+from app.utils.time import TZ_GMT7
 
 router = APIRouter(prefix="/api/dn")
 
@@ -42,6 +47,78 @@ def _canonicalize_status_delivery(value: Optional[str]) -> str:
     if canonical:
         return canonical
     return collapsed
+
+
+def _normalize_lsp_label(raw_lsp: Optional[str], plan_mos_date: Optional[str]) -> str:
+    trimmed = (raw_lsp or "").strip()
+    if not trimmed:
+        base = "NO_LSP"
+    else:
+        upper = trimmed.upper()
+        if upper in {"#N/A", "NO LSP", "NO_LSP"}:
+            base = "NO_LSP"
+        elif upper == "SUBCON":
+            base = "Subcon"
+        else:
+            base = trimmed
+
+    if base == "NO_LSP" and not (plan_mos_date or "").strip():
+        return "NO_LSP_NO_PLAN_MOS_DATE"
+
+    return base
+
+
+def _to_jakarta(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TZ_GMT7)
+
+
+def _build_update_summary(
+    rows: Sequence[tuple[str | None, str | None, datetime | None]]
+) -> list[StatusDeliveryLspUpdateRecord]:
+    records_by_lsp: dict[str, dict[date, Counter]] = {}
+
+    for raw_lsp, plan_mos_date, latest_created_at in rows:
+        jakarta_dt = _to_jakarta(latest_created_at)
+        if jakarta_dt is None:
+            continue
+
+        hour_bucket = jakarta_dt.replace(minute=0, second=0, microsecond=0)
+        lsp_label = _normalize_lsp_label(raw_lsp, plan_mos_date)
+        day = hour_bucket.date()
+
+        day_map = records_by_lsp.setdefault(lsp_label, {})
+        counter = day_map.setdefault(day, Counter())
+        counter[hour_bucket] += 1
+
+    raw_records: list[tuple[datetime, str, int]] = []
+
+    for lsp_label, day_map in records_by_lsp.items():
+        for day in sorted(day_map):
+            hour_counter = day_map[day]
+            running_total = 0
+            for hour in sorted(hour_counter):
+                running_total += hour_counter[hour]
+                raw_records.append((hour, lsp_label, running_total))
+
+    raw_records.sort(key=lambda item: (item[0], item[1]))
+
+    update_records: list[StatusDeliveryLspUpdateRecord] = []
+    for idx, (hour, lsp_label, running_total) in enumerate(raw_records, start=1):
+        update_records.append(
+            StatusDeliveryLspUpdateRecord(
+                id=idx,
+                lsp=lsp_label,
+                updated_dn=running_total,
+                update_date=hour.strftime("%d %b %y"),
+                recorded_at=hour.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        )
+
+    return update_records
 
 
 @router.get("/stats/{date}")
@@ -139,7 +216,7 @@ def get_status_delivery_lsp_summary_records(
         db, lsp=normalized_lsp, limit=limit
     )
 
-    data = [
+    plan_mos_records = [
         StatusDeliveryLspSummaryRecord(
             id=record.id,
             lsp=record.lsp,
@@ -151,4 +228,12 @@ def get_status_delivery_lsp_summary_records(
         for record in records
     ]
 
-    return StatusDeliveryLspSummaryHistoryResponse(data=data)
+    update_rows = get_dn_latest_update_snapshots(db, lsp=normalized_lsp)
+    update_summary = _build_update_summary(update_rows)
+
+    return StatusDeliveryLspSummaryHistoryResponse(
+        data=StatusDeliveryLspSummaryHistoryData(
+            by_plan_mos_date=plan_mos_records,
+            by_update_date=update_summary,
+        )
+    )

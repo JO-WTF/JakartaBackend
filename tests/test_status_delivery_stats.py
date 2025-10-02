@@ -19,7 +19,7 @@ from app.crud import (  # noqa: E402
     upsert_status_delivery_lsp_stats,
 )
 from app.db import Base  # noqa: E402
-from app.models import DN  # noqa: E402
+from app.models import DN, DNRecord  # noqa: E402
 
 
 @pytest.fixture
@@ -276,16 +276,52 @@ def test_get_status_delivery_lsp_summary_records(db_session):
         ],
     )
 
+    db_session.add_all(
+        [
+            DN(
+                dn_number="DN-A",
+                lsp="Alpha",
+                plan_mos_date="01 Jan 25",
+            ),
+            DN(
+                dn_number="DN-B",
+                lsp="Alpha ",
+                plan_mos_date="01 Jan 25",
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            DNRecord(
+                dn_number="DN-A",
+                status="Delivered",
+                created_at=datetime(2025, 1, 1, 1, 0, tzinfo=timezone.utc),
+            ),
+            DNRecord(
+                dn_number="DN-B",
+                status="Delivered",
+                created_at=datetime(2025, 1, 1, 2, 30, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db_session.commit()
+
     response = get_status_delivery_lsp_summary_records(
         lsp="Alpha", limit=10, db=db_session
     )
-    assert len(response.data) == 1
-    record = response.data[0]
+    assert len(response.data.by_plan_mos_date) == 1
+    record = response.data.by_plan_mos_date[0]
     assert record.lsp == "Alpha"
     assert record.total_dn == 4
     assert record.status_not_empty == 2
     assert record.plan_mos_date == "01 Jan 25"
     assert record.recorded_at.replace(tzinfo=timezone.utc) == recorded_at
+
+    updates = response.data.by_update_date
+    assert [(row.lsp, row.updated_dn, row.recorded_at, row.update_date) for row in updates] == [
+        ("Alpha", 1, "2025-01-01 08:00:00", "01 Jan 25"),
+        ("Alpha", 2, "2025-01-01 09:00:00", "01 Jan 25"),
+    ]
 
 
 def test_capture_status_delivery_lsp_summary(monkeypatch):
@@ -335,3 +371,70 @@ def test_capture_status_delivery_lsp_summary(monkeypatch):
     assert record.lsp == "Alpha"
     assert record.total_dn == 2
     assert record.status_not_empty == 1
+
+
+def test_get_status_delivery_lsp_summary_records_normalizes_lsp_labels(db_session):
+    from app.api.dn.stats import get_status_delivery_lsp_summary_records
+
+    snapshot_time = datetime(2025, 1, 2, 8, tzinfo=timezone.utc)
+
+    upsert_status_delivery_lsp_stats(
+        db_session,
+        [
+            {
+                "lsp": "NO LSP",
+                "total_dn": 2,
+                "status_not_empty": 1,
+                "plan_mos_date": "02 Jan 25",
+                "recorded_at": snapshot_time,
+            }
+        ],
+    )
+
+    db_session.add_all(
+        [
+            DN(dn_number="DN-NA", lsp="#N/A", plan_mos_date="02 Jan 25"),
+            DN(dn_number="DN-NO", lsp=" NO LSP ", plan_mos_date="02 Jan 25"),
+            DN(dn_number="DN-EMPTY", lsp=None, plan_mos_date=None),
+            DN(dn_number="DN-SUB", lsp="SUBCON", plan_mos_date="02 Jan 25"),
+        ]
+    )
+    db_session.add_all(
+        [
+            DNRecord(
+                dn_number="DN-NA",
+                status="Delivered",
+                created_at=datetime(2025, 1, 2, 0, 15, tzinfo=timezone.utc),
+            ),
+            DNRecord(
+                dn_number="DN-NO",
+                status="Delivered",
+                created_at=datetime(2025, 1, 2, 1, 15, tzinfo=timezone.utc),
+            ),
+            DNRecord(
+                dn_number="DN-SUB",
+                status="On Site",
+                created_at=datetime(2025, 1, 2, 2, 15, tzinfo=timezone.utc),
+            ),
+            DNRecord(
+                dn_number="DN-EMPTY",
+                status="POD",
+                created_at=datetime(2025, 1, 3, 0, 15, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = get_status_delivery_lsp_summary_records(lsp=None, limit=1000, db=db_session)
+
+    updates = [
+        (row.lsp, row.updated_dn, row.recorded_at, row.update_date)
+        for row in response.data.by_update_date
+    ]
+
+    assert updates == [
+        ("NO_LSP", 1, "2025-01-02 07:00:00", "02 Jan 25"),
+        ("NO_LSP", 2, "2025-01-02 08:00:00", "02 Jan 25"),
+        ("Subcon", 1, "2025-01-02 09:00:00", "02 Jan 25"),
+        ("NO_LSP_NO_PLAN_MOS_DATE", 1, "2025-01-03 07:00:00", "03 Jan 25"),
+    ]

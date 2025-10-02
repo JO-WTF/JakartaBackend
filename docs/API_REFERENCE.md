@@ -622,31 +622,44 @@ Status: 404
 ```json
 {
   "ok": true,
-  "data": [
-    {
-      "id": 1,
-      "lsp": "LSP Alpha",
-      "total_dn": 40,
-      "status_not_empty": 35,
-      "plan_mos_date": "01 Jan 25",
-      "recorded_at": "2025-01-01T08:00:00+07:00"
-    },
-    {
-      "id": 2,
-      "lsp": "LSP Alpha",
-      "total_dn": 42,
-      "status_not_empty": 38,
-      "plan_mos_date": "01 Jan 25",
-      "recorded_at": "2025-01-01T09:00:00+07:00"
-    }
-  ]
+  "data": {
+    "by_plan_mos_date": [
+      {
+        "id": 1,
+        "lsp": "LSP Alpha",
+        "total_dn": 40,
+        "status_not_empty": 35,
+        "plan_mos_date": "01 Jan 25",
+        "recorded_at": "2025-01-01T08:00:00+07:00"
+      }
+    ],
+    "by_update_date": [
+      {
+        "id": 1,
+        "lsp": "LSP Alpha",
+        "updated_dn": 40,
+        "update_date": "01 Jan 25",
+        "recorded_at": "2025-01-01 08:00:00"
+      },
+      {
+        "id": 2,
+        "lsp": "NO_LSP",
+        "updated_dn": 12,
+        "update_date": "01 Jan 25",
+        "recorded_at": "2025-01-01 09:00:00"
+      }
+    ]
+  }
 }
 ```
 
 **说明**:
-- 数据按 `recorded_at` 降序排列 (最新的在前)
-- 每小时整点自动捕获一次快照
-- 默认返回最近 5000 条记录
+- `by_plan_mos_date`: 仍然返回按小时捕获的 LSP 快照，数据按 `recorded_at` 降序排列 (最新的在前)
+- `by_update_date`: 基于每条 DN 的最新记录时间 (换算为雅加达时区并取整到小时) 计算的累计 DN 数
+  - `updated_dn`: 截至该小时为止某 LSP 的累计 DN 数量
+  - `update_date`: 雅加达当地日期 (格式 `%d %b %y`)
+  - `recorded_at`: 雅加达当地小时 (格式 `YYYY-MM-DD HH:mm:ss`)
+- 默认返回最近 5000 条 Plan MOS 快照；`by_update_date` 始终返回所有符合条件的最新数据
 
 ---
 

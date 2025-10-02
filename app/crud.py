@@ -820,6 +820,47 @@ def get_dn_status_delivery_lsp_counts(
     ]
 
 
+def get_dn_latest_update_snapshots(
+    db: Session,
+    *,
+    lsp: Optional[str] = None,
+) -> list[tuple[str | None, str | None, datetime | None]]:
+    """Return latest DN record timestamps grouped by DN row."""
+
+    latest_record_subq = (
+        db.query(
+            DNRecord.dn_number.label("dn_number"),
+            func.max(DNRecord.created_at).label("latest_record_created_at"),
+        )
+        .group_by(DNRecord.dn_number)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            DN.lsp,
+            DN.plan_mos_date,
+            latest_record_subq.c.latest_record_created_at,
+        )
+        .join(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
+        .filter(_ACTIVE_DN_EXPR)
+    )
+
+    trimmed_lsp = lsp.strip() if isinstance(lsp, str) else None
+    if trimmed_lsp:
+        query = query.filter(func.trim(DN.lsp) == trimmed_lsp)
+
+    rows = query.all()
+    return [
+        (
+            row.lsp,
+            row.plan_mos_date,
+            row.latest_record_created_at,
+        )
+        for row in rows
+    ]
+
+
 def upsert_status_delivery_lsp_stats(
     db: Session,
     records: Sequence[dict[str, Any]],
