@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.sync import DN_RE
+from app.constants import DN_RE
 from app.crud import get_latest_dn_records_map, list_all_dn_records, list_dn_by_dn_numbers, search_dn_list
 from app.db import get_db
 from app.dn_columns import get_sheet_columns

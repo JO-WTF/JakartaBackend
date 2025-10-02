@@ -7,8 +7,9 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app.constants import DN_RE, VALID_STATUSES
 from app.core.sheet import sync_delivery_status_to_sheet, sync_status_timestamp_to_sheet
-from app.core.sync import DN_RE, VALID_STATUSES, _normalize_status_delivery_value
+from app.core.sync import _normalize_status_delivery_value
 from app.crud import (
     add_dn_record,
     delete_dn,
@@ -61,7 +62,12 @@ def update_dn(
     delivery_status_value = (delivery_status_raw or "").strip() or None
 
     if delivery_status_value is None:
-        delivery_status_value = "On Site" if status == "ARRIVED AT SITE" else "On the way"
+        if status == "ARRIVED AT SITE":
+            delivery_status_value = "On Site"
+        elif status == "POD":
+            delivery_status_value = "POD"
+        else:
+            delivery_status_value = "On the way"
     else:
         # 规范化用户输入
         delivery_status_value = _normalize_status_delivery_value(delivery_status_value)

@@ -5,7 +5,8 @@ from datetime import datetime, time, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.core.sync import VEHICLE_VALID_STATUSES, serialize_vehicle
+from app.constants import VEHICLE_VALID_STATUSES
+from app.core.sync import serialize_vehicle
 from app.crud import get_vehicle_by_plate, list_vehicles
 from app.db import get_db
 from app.utils.string import normalize_vehicle_plate

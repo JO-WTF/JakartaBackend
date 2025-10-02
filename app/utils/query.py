@@ -6,7 +6,7 @@ from typing import Any, Iterable, List, Optional
 
 from fastapi import HTTPException
 
-from app.core.sync import DN_RE
+from app.constants import DN_RE
 from app.utils.string import normalize_dn
 
 __all__ = ["collect_query_values", "normalize_batch_dn_numbers"]

@@ -318,17 +318,15 @@ def sync_status_timestamp_to_sheet(
     
     Timestamp format: M/D/YYYY H:MM:SS in GMT+7 timezone.
     """
+    from app.constants import ARRIVAL_STATUSES, DEPARTURE_STATUSES
+    
     # Determine target column based on status
     status_upper = status.strip().upper()
     
-    # Define status groups
-    arrival_statuses = {"ARRIVED AT XD/PM", "ARRIVED AT SITE"}
-    departure_statuses = {"TRANSPORTING FROM WH", "TRANSPORTING FROM XD/PM"}
-    
     # Check which column to update
-    if status_upper in arrival_statuses:
+    if status_upper in ARRIVAL_STATUSES:
         target_column_name = "actual_arrive_time_ata"  # Column S
-    elif status_upper in departure_statuses:
+    elif status_upper in DEPARTURE_STATUSES:
         target_column_name = "actual_depart_from_start_point_atd"  # Column R
     else:
         # Status doesn't require timestamp update

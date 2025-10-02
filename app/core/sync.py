@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,13 +13,22 @@ from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+# Re-export constants for backward compatibility
+from app.constants import (
+    DN_RE,
+    STANDARD_STATUS_DELIVERY_VALUES,
+    STATUS_DELIVERY_LOOKUP,
+    VALID_STATUSES,
+    VALID_STATUS_DESCRIPTION,
+    VEHICLE_VALID_STATUSES,
+)
 from app.core.google import SPREADSHEET_URL, create_gspread_client
 from app.core.sheet import (
     process_all_sheets,
     normalize_sheet_value,
     parse_date,
 )
-from app.crud import add_dn_record, create_dn_sync_log, ensure_dn, get_dn_map_by_numbers, get_latest_dn_records_map, _ACTIVE_DN_EXPR
+from app.crud import create_dn_sync_log, get_dn_map_by_numbers, get_latest_dn_records_map, _ACTIVE_DN_EXPR
 from app.db import SessionLocal
 from app.dn_columns import get_mutable_dn_columns
 from app.models import DN, Vehicle
@@ -29,10 +37,13 @@ from app.utils.string import normalize_dn
 from app.utils.time import to_gmt7_iso
 
 __all__ = [
+    # Re-exported constants for backward compatibility
     "DN_RE",
     "VALID_STATUSES",
     "VALID_STATUS_DESCRIPTION",
     "VEHICLE_VALID_STATUSES",
+    "STANDARD_STATUS_DELIVERY_VALUES",
+    # Module-specific exports
     "DnSyncResult",
     "sync_dn_sheet_to_db",
     "sync_dn_sheet_with_new_session",
@@ -40,56 +51,8 @@ __all__ = [
     "scheduled_dn_sheet_sync",
     "normalize_database_fields",
     "serialize_vehicle",
+    "_normalize_status_delivery_value",
 ]
-
-DN_RE = re.compile(r"^.+$")
-
-VALID_STATUSES: tuple[str, ...] = (
-    "PREPARE VEHICLE",
-    "ON THE WAY",
-    "ON SITE",
-    "POD",
-    "REPLAN MOS PROJECT",
-    "WAITING PIC FEEDBACK",
-    "REPLAN MOS DUE TO LSP DELAY",
-    "CLOSE BY RN",
-    "CANCEL MOS",
-    "NO STATUS",
-    "NEW MOS",
-    "ARRIVED AT WH",
-    "TRANSPORTING FROM WH",
-    "ARRIVED AT XD/PM",
-    "TRANSPORTING FROM XD/PM",
-    "ARRIVED AT SITE",
-    "开始运输",
-    "运输中",
-    "已到达",
-    "过夜",
-)
-VALID_STATUS_DESCRIPTION = ", ".join(VALID_STATUSES)
-
-VEHICLE_VALID_STATUSES: tuple[str, ...] = ("arrived", "departed")
-
-STANDARD_STATUS_DELIVERY_VALUES: tuple[str, ...] = (
-    "Prepare Vehicle",
-    "On the way",
-    "On Site",
-    "POD",
-    "Waiting PIC Feedback",
-    "RePlan MOS due to LSP Delay",
-    "RePlan MOS Project",
-    "Cancel MOS",
-    "Close by RN",
-)
-
-_STATUS_DELIVERY_LOOKUP: dict[str, str] = {
-    canonical.lower(): canonical for canonical in STANDARD_STATUS_DELIVERY_VALUES
-}
-_STATUS_DELIVERY_LOOKUP.update({
-    "close by rn": "Close by RN",
-    "no status": "No Status",
-    "on the way": "On the way",  # Ensure consistent capitalization
-})
 
 
 @dataclass
@@ -112,14 +75,36 @@ def _values_match(existing_value: Any, new_value: Any) -> bool:
     return existing_value == new_value
 
 
-def _normalize_status_delivery_value(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    collapsed = " ".join(value.split())
-    if not collapsed:
+def _normalize_status_delivery_value(raw_value: str | None) -> str | None:
+    """Normalize delivery status input to standard values.
+    
+    Args:
+        raw_value: The raw status delivery value to normalize
+        
+    Returns:
+        Normalized status delivery value or None if empty/invalid
+        For non-string values, returns the value as-is
+        For standard values (case-insensitive), returns the canonical format
+        For non-standard values, returns the trimmed value with normalized whitespace
+    """
+    # Handle None and non-string types
+    if raw_value is None:
         return None
-    canonical = _STATUS_DELIVERY_LOOKUP.get(collapsed.lower())
-    return canonical if canonical is not None else collapsed
+    if not isinstance(raw_value, str):
+        return raw_value
+    
+    # Trim and normalize whitespace
+    trimmed = " ".join(raw_value.split())
+    if not trimmed:
+        return None
+    
+    # Check if it's a standard value (case-insensitive)
+    normalized = STATUS_DELIVERY_LOOKUP.get(trimmed.lower())
+    if normalized:
+        return normalized
+    
+    # For non-standard values, return the normalized whitespace version
+    return trimmed
 
 
 def normalize_database_fields(db: Session) -> None:

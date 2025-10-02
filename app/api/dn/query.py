@@ -8,7 +8,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.core.sync import DN_RE, VALID_STATUS_DESCRIPTION
+from app.constants import DN_RE, VALID_STATUS_DESCRIPTION
 from app.crud import list_dn_records, list_dn_records_by_dn_numbers, search_dn_records
 from app.db import get_db
 from app.utils.query import normalize_batch_dn_numbers

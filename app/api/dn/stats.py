@@ -22,7 +22,7 @@ from app.schemas.dn import (
     StatusDeliveryLspSummaryRecord,
     StatusDeliveryLspSummaryHistoryResponse,
 )
-from app.core.sync import STANDARD_STATUS_DELIVERY_VALUES
+from app.constants import STANDARD_STATUS_DELIVERY_VALUES
 
 router = APIRouter(prefix="/api/dn")
 
