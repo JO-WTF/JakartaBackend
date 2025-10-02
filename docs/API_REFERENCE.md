@@ -603,7 +603,7 @@ Status: 404
 ```
 
 **说明**:
-- `total_dn`: LSP 的 DN 总数
+- `total_dn`: LSP 的 DN 总数 (仅统计状态为 On the way, On Site, POD 的 DN)
 - `status_not_empty`: 有状态的 DN 数量
 
 ---
@@ -1017,7 +1017,7 @@ interface Vehicle {
 interface StatusDeliveryLspStat {
   id: number;                  // ID (主键)
   lsp: string;                 // 物流服务商
-  total_dn: number;            // DN 总数
+  total_dn: number;            // DN 总数 (仅统计状态为 On the way, On Site, POD 的 DN)
   status_not_empty: number;    // 有状态的 DN 数
   plan_mos_date: string;       // 计划日期
   recorded_at: string;         // 记录时间 (ISO 8601)

@@ -155,7 +155,7 @@ class DNRecord:
 class StatusDeliveryLspStat:
     id: int              # ID (主键)
     lsp: str            # 物流服务商
-    total_dn: int       # DN 总数
+    total_dn: int       # DN 总数 (仅统计状态为 On the way, On Site, POD 的 DN)
     status_not_empty: int # 有状态的 DN 数
     plan_mos_date: str  # 计划日期
     recorded_at: datetime # 记录时间

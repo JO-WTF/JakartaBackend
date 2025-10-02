@@ -5,7 +5,7 @@ import json
 from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence, Literal
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, case
 from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat
 from .dn_columns import filter_assignable_dn_fields
 
@@ -751,16 +751,33 @@ def get_dn_status_delivery_lsp_counts(
     lsp: Optional[str] = None,
     plan_mos_date: Optional[str] = None,
 ) -> List[tuple[str, int, int]]:
-    """Return DN counts grouped by LSP with totals and non-empty status counts."""
+    """Return DN counts grouped by LSP with totals and non-empty status counts.
+
+    Note: total_count now includes only DNs with status_delivery in
+    ['On the way', 'On Site', 'POD'] (case-insensitive).
+    """
 
     lsp_expr = func.coalesce(func.nullif(func.trim(DN.lsp), ""), "NO LSP")
     trimmed_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
     trimmed_lsp = lsp.strip() if lsp else None
 
+    # Define the target status_delivery values (case-insensitive match)
+    target_statuses = ["On the way", "On Site", "POD"]
+
+    # Create case expression for counting only specific status_delivery values
+    status_delivery_trimmed = func.trim(DN.status_delivery)
+    status_delivery_lower = func.lower(status_delivery_trimmed)
+
+    # Build case expression to count only target statuses
+    count_case = case(
+        *[(func.lower(status) == status_delivery_lower, 1) for status in target_statuses],
+        else_=None
+    )
+
     query = (
         db.query(
             lsp_expr.label("lsp"),
-            func.count(DN.id).label("total_count"),
+            func.count(count_case).label("total_count"),
             func.count(func.nullif(func.trim(DN.status), "")).label("status_not_empty_count"),
         )
         .filter(_ACTIVE_DN_EXPR)

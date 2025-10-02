@@ -110,7 +110,8 @@ def test_status_delivery_and_lsp_counts(db_session):
     lsp_counts = get_dn_status_delivery_lsp_counts(
         db_session, plan_mos_date="01 Jan 25"
     )
-    assert lsp_counts == [("Alpha", 2, 1), ("NO LSP", 1, 0)]
+    # DN-3 has no status_delivery, so it's not counted in total_dn for NO LSP
+    assert lsp_counts == [("Alpha", 2, 1), ("NO LSP", 0, 0)]
 
     alpha_only = get_dn_status_delivery_lsp_counts(
         db_session, lsp=" Alpha", plan_mos_date="01 Jan 25"
@@ -169,7 +170,8 @@ def test_status_delivery_stats_response_format(db_session):
         "total": 3,
         "lsp_summary": [
             {"lsp": "Alpha", "total_dn": 2, "status_not_empty": 1},
-            {"lsp": "NO LSP", "total_dn": 1, "status_not_empty": 0},
+            # DN-3 has no status_delivery (not in target statuses), so total_dn is 0
+            {"lsp": "NO LSP", "total_dn": 0, "status_not_empty": 0},
         ],
     }
 
@@ -305,12 +307,14 @@ def test_capture_status_delivery_lsp_summary(monkeypatch):
                     lsp="Alpha",
                     plan_mos_date="01 Jan 25",
                     status="Delivered",
+                    status_delivery="POD",
                 ),
                 DN(
                     dn_number="DN-2",
                     lsp="Alpha",
                     plan_mos_date="01 Jan 25",
                     status=None,
+                    status_delivery="On Site",
                 ),
             ]
         )
