@@ -20,6 +20,7 @@ from app.crud import (  # noqa: E402
 )
 from app.db import Base  # noqa: E402
 from app.models import DN, DNRecord  # noqa: E402
+from app.utils.time import TZ_GMT7  # noqa: E402
 
 
 @pytest.fixture
@@ -251,8 +252,13 @@ def test_search_dn_list_excludes_deleted(db_session):
     assert [item.dn_number for item in items] == ["ACTIVE-1"]
 
 
-def test_get_status_delivery_lsp_summary_records(db_session):
+def test_get_status_delivery_lsp_summary_records(db_session, monkeypatch):
     from app.api.dn.stats import get_status_delivery_lsp_summary_records
+
+    monkeypatch.setattr(
+        "app.api.dn.stats._current_jakarta_hour",
+        lambda: datetime(2025, 1, 1, 9, tzinfo=TZ_GMT7),
+    )
 
     recorded_at = datetime(2025, 1, 1, 8, tzinfo=timezone.utc)
 
@@ -318,10 +324,13 @@ def test_get_status_delivery_lsp_summary_records(db_session):
     assert record.recorded_at.replace(tzinfo=timezone.utc) == recorded_at
 
     updates = response.data.by_update_date
-    assert [(row.lsp, row.updated_dn, row.recorded_at, row.update_date) for row in updates] == [
-        ("Alpha", 1, "2025-01-01 08:00:00", "01 Jan 25"),
-        ("Alpha", 2, "2025-01-01 09:00:00", "01 Jan 25"),
-    ]
+    updates_map = {row.recorded_at: row.updated_dn for row in updates}
+    for hour in range(0, 8):
+        key = f"2025-01-01 {hour:02d}:00:00"
+        assert updates_map[key] == 0
+
+    assert updates_map["2025-01-01 08:00:00"] == 1
+    assert updates_map["2025-01-01 09:00:00"] == 2
 
 
 def test_capture_status_delivery_lsp_summary(monkeypatch):
@@ -373,9 +382,13 @@ def test_capture_status_delivery_lsp_summary(monkeypatch):
     assert record.status_not_empty == 1
 
 
-def test_get_status_delivery_lsp_summary_records_normalizes_lsp_labels(db_session):
+def test_get_status_delivery_lsp_summary_records_normalizes_lsp_labels(db_session, monkeypatch):
     from app.api.dn.stats import get_status_delivery_lsp_summary_records
 
+    monkeypatch.setattr(
+        "app.api.dn.stats._current_jakarta_hour",
+        lambda: datetime(2025, 1, 3, 7, tzinfo=TZ_GMT7),
+    )
     snapshot_time = datetime(2025, 1, 2, 8, tzinfo=timezone.utc)
 
     upsert_status_delivery_lsp_stats(
@@ -427,14 +440,88 @@ def test_get_status_delivery_lsp_summary_records_normalizes_lsp_labels(db_sessio
 
     response = get_status_delivery_lsp_summary_records(lsp=None, limit=1000, db=db_session)
 
-    updates = [
-        (row.lsp, row.updated_dn, row.recorded_at, row.update_date)
-        for row in response.data.by_update_date
-    ]
+    updates = response.data.by_update_date
+    lookup = {
+        (row.lsp, row.recorded_at): row.updated_dn
+        for row in updates
+    }
 
-    assert updates == [
-        ("NO_LSP", 1, "2025-01-02 07:00:00", "02 Jan 25"),
-        ("NO_LSP", 2, "2025-01-02 08:00:00", "02 Jan 25"),
-        ("Subcon", 1, "2025-01-02 09:00:00", "02 Jan 25"),
-        ("NO_LSP_NO_PLAN_MOS_DATE", 1, "2025-01-03 07:00:00", "03 Jan 25"),
-    ]
+    assert lookup[("NO_LSP", "2025-01-02 07:00:00")] == 1
+    assert lookup[("NO_LSP", "2025-01-02 08:00:00")] == 2
+    assert lookup[("Subcon", "2025-01-02 09:00:00")] == 1
+    assert lookup[("NO_LSP_NO_PLAN_MOS_DATE", "2025-01-03 07:00:00")] == 1
+
+
+def test_get_status_delivery_lsp_summary_records_fills_missing_hours(db_session, monkeypatch):
+    from app.api.dn.stats import get_status_delivery_lsp_summary_records
+
+    monkeypatch.setattr(
+        "app.api.dn.stats._current_jakarta_hour",
+        lambda: datetime(2025, 1, 5, 10, tzinfo=TZ_GMT7),
+    )
+    db_session.add_all(
+        [
+            DN(dn_number="DN-GAP-1", lsp="Alpha", plan_mos_date="05 Jan 25"),
+            DN(dn_number="DN-GAP-2", lsp="Alpha", plan_mos_date="05 Jan 25"),
+        ]
+    )
+    db_session.add_all(
+        [
+            DNRecord(
+                dn_number="DN-GAP-1",
+                status="POD",
+                created_at=datetime(2025, 1, 5, 0, 15, tzinfo=timezone.utc),
+            ),
+            DNRecord(
+                dn_number="DN-GAP-2",
+                status="On Site",
+                created_at=datetime(2025, 1, 5, 3, 45, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = get_status_delivery_lsp_summary_records(lsp="Alpha", limit=100, db=db_session)
+
+    updates_map = {row.recorded_at: row.updated_dn for row in response.data.by_update_date}
+
+    for hour in range(0, 7):
+        key = f"2025-01-05 {hour:02d}:00:00"
+        assert updates_map[key] == 0
+
+    assert updates_map["2025-01-05 07:00:00"] == 1
+    assert updates_map["2025-01-05 08:00:00"] == 1
+    assert updates_map["2025-01-05 09:00:00"] == 1
+    assert updates_map["2025-01-05 10:00:00"] == 2
+
+
+def test_get_status_delivery_lsp_summary_records_returns_zero_for_quiet_day(db_session, monkeypatch):
+    from app.api.dn.stats import get_status_delivery_lsp_summary_records
+
+    monkeypatch.setattr(
+        "app.api.dn.stats._current_jakarta_hour",
+        lambda: datetime(2025, 1, 6, 5, tzinfo=TZ_GMT7),
+    )
+
+    db_session.add(
+        DN(
+            dn_number="DN-Q-1",
+            lsp="Alpha",
+            plan_mos_date="05 Jan 25",
+        )
+    )
+    db_session.add(
+        DNRecord(
+            dn_number="DN-Q-1",
+            status="POD",
+            created_at=datetime(2025, 1, 5, 0, 15, tzinfo=timezone.utc),
+        )
+    )
+    db_session.commit()
+
+    response = get_status_delivery_lsp_summary_records(lsp="Alpha", limit=1000, db=db_session)
+
+    updates = response.data.by_update_date
+    assert any(row.recorded_at == "2025-01-06 00:00:00" and row.updated_dn == 0 for row in updates)
+    assert updates[-1].recorded_at == "2025-01-06 05:00:00"
+    assert updates[-1].updated_dn == 0

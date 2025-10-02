@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timezone, date
+from collections import defaultdict
+from datetime import datetime, timezone, date, timedelta, time
 from typing import Any, Optional, Sequence
 
 from fastapi import APIRouter, Depends, Query
@@ -49,6 +49,11 @@ def _canonicalize_status_delivery(value: Optional[str]) -> str:
     return collapsed
 
 
+def _current_jakarta_hour() -> datetime:
+    now = datetime.now(TZ_GMT7)
+    return now.replace(minute=0, second=0, microsecond=0)
+
+
 def _normalize_lsp_label(raw_lsp: Optional[str], plan_mos_date: Optional[str]) -> str:
     trimmed = (raw_lsp or "").strip()
     if not trimmed:
@@ -77,32 +82,66 @@ def _to_jakarta(dt: datetime | None) -> datetime | None:
 
 
 def _build_update_summary(
-    rows: Sequence[tuple[str | None, str | None, datetime | None]]
+    rows: Sequence[tuple[str | None, str | None, datetime | None]],
+    *,
+    current_hour: datetime | None = None,
 ) -> list[StatusDeliveryLspUpdateRecord]:
-    records_by_lsp: dict[str, dict[date, Counter]] = {}
+    per_lsp_day_counts: dict[str, dict[date, list[int]]] = defaultdict(dict)
 
     for raw_lsp, plan_mos_date, latest_created_at in rows:
         jakarta_dt = _to_jakarta(latest_created_at)
         if jakarta_dt is None:
             continue
 
-        hour_bucket = jakarta_dt.replace(minute=0, second=0, microsecond=0)
         lsp_label = _normalize_lsp_label(raw_lsp, plan_mos_date)
-        day = hour_bucket.date()
+        day_bucket = jakarta_dt.date()
+        hour_index = jakarta_dt.hour
 
-        day_map = records_by_lsp.setdefault(lsp_label, {})
-        counter = day_map.setdefault(day, Counter())
-        counter[hour_bucket] += 1
+        day_counts = per_lsp_day_counts[lsp_label].setdefault(day_bucket, [0] * 24)
+        day_counts[hour_index] += 1
+
+    reference_hour: datetime | None
+    if current_hour is None:
+        reference_hour = _current_jakarta_hour()
+    else:
+        localized = _to_jakarta(current_hour)
+        reference_hour = (
+            localized.replace(minute=0, second=0, microsecond=0)
+            if localized is not None
+            else None
+        )
+
+    reference_day = reference_hour.date() if reference_hour else None
 
     raw_records: list[tuple[datetime, str, int]] = []
 
-    for lsp_label, day_map in records_by_lsp.items():
-        for day in sorted(day_map):
-            hour_counter = day_map[day]
+    for lsp_label, day_map in per_lsp_day_counts.items():
+        if not day_map:
+            continue
+
+        sorted_days = sorted(day_map)
+        first_day = sorted_days[0]
+        last_day = sorted_days[-1]
+        if reference_day:
+            last_day = max(last_day, reference_day)
+
+        current_day = first_day
+        while current_day <= last_day:
+            hours = day_map.get(current_day, [0] * 24)
+            max_hour = 23
+            if reference_day and current_day == reference_day:
+                max_hour = reference_hour.hour
+
             running_total = 0
-            for hour in sorted(hour_counter):
-                running_total += hour_counter[hour]
-                raw_records.append((hour, lsp_label, running_total))
+            for hour_idx in range(max_hour + 1):
+                running_total += hours[hour_idx]
+                hour_dt = datetime.combine(
+                    current_day,
+                    time(hour_idx, 0, 0, tzinfo=TZ_GMT7),
+                )
+                raw_records.append((hour_dt, lsp_label, running_total))
+
+            current_day += timedelta(days=1)
 
     raw_records.sort(key=lambda item: (item[0], item[1]))
 
