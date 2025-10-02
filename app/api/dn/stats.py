@@ -267,7 +267,11 @@ def get_status_delivery_lsp_summary_records(
         for record in records
     ]
 
-    update_rows = get_dn_latest_update_snapshots(db, lsp=normalized_lsp)
+    update_rows = get_dn_latest_update_snapshots(
+        db,
+        lsp=normalized_lsp,
+        include_deleted=True,
+    )
     update_summary = _build_update_summary(update_rows)
 
     return StatusDeliveryLspSummaryHistoryResponse(

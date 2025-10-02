@@ -824,8 +824,13 @@ def get_dn_latest_update_snapshots(
     db: Session,
     *,
     lsp: Optional[str] = None,
+    include_deleted: bool = False,
 ) -> list[tuple[str | None, str | None, datetime | None]]:
-    """Return latest DN record timestamps grouped by DN row."""
+    """Return latest DN record timestamps grouped by DN row.
+
+    When ``include_deleted`` is ``True`` the result set will include DN rows that
+    are soft-deleted (``is_deleted != 'N'``).
+    """
 
     latest_record_subq = (
         db.query(
@@ -843,8 +848,10 @@ def get_dn_latest_update_snapshots(
             latest_record_subq.c.latest_record_created_at,
         )
         .join(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
-        .filter(_ACTIVE_DN_EXPR)
     )
+
+    if not include_deleted:
+        query = query.filter(_ACTIVE_DN_EXPR)
 
     trimmed_lsp = lsp.strip() if isinstance(lsp, str) else None
     if trimmed_lsp:
