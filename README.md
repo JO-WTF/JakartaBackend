@@ -12,7 +12,9 @@ JakartaBackend 是一个基于 FastAPI 构建的物流管理系统后端服务�
 - **文件管理**: 照片等附件的上传和存储 (S3/本地)
 - **状态规范化**: 自动规范化 status_delivery 值为标准格式
 - **时区支持**: 统一使用雅加达时区 (GMT+7)
-- **智能时间戳**: 根据状态自动写入时间戳到 Google Sheet
+- **智能时间戳**: 根据状态自动写入时间戳到 Google Sheet (支持到达/出发场景)
+- **软删除查询**: 支持查询已软删除的记录 (管理员功能)
+- **全局常量管理**: 统一的常量定义，提高代码可维护性
 
 ## 技术架构
 
@@ -60,6 +62,7 @@ JakartaBackend 是一个基于 FastAPI 构建的物流管理系统后端服务�
 app/
 ├── main.py                 # 应用入口和配置
 ├── settings.py             # 环境变量和配置管理
+├── constants.py            # 全局常量定义 (新增)
 ├── db.py                   # 数据库连接和会话管理
 ├── models.py               # SQLAlchemy 数据模型
 ├── crud.py                 # 数据库操作(CRUD)
@@ -258,11 +261,17 @@ Google Sheets → 数据抓取 → 格式化 → 数据库比对 → 更新/插�
 状态变更 → 历史记录创建 → 主表更新 → Sheet 同步 → 时间戳写入 → 通知反馈
 ```
 
-**时间戳写入规则**:
-- 状态为 `ARRIVED AT SITE` (不区分大小写) → 写入 S 列 (`actual_arrive_time_ata`)
-- 其他状态 → 写入 R 列 (`actual_depart_from_start_point_atd`)
+**时间戳写入规则** (更新于 2025-10-02):
+- **到达时间戳** (写入 S 列 `actual_arrive_time_ata`):
+  - `ARRIVED AT SITE` - 到达 site
+  - `ARRIVED AT XD/PM` - 到达 XD/PM
+- **出发时间戳** (写入 R 列 `actual_depart_from_start_point_atd`):
+  - `TRANSPORTING FROM WH` - 从 WH 出发
+  - `TRANSPORTING FROM XD/PM` - 从 XD/PM 出发
+- **其他状态**: 不写入时间戳 (如 `POD`, `ON THE WAY` 等)
 - 时间格式: `M/D/YYYY H:MM:SS` (GMT+7)
-- 详细说明: [TIMESTAMP_FEATURE.md](./docs/TIMESTAMP_FEATURE.md)
+- 状态匹配不区分大小写
+- 详细说明: [API_REFERENCE.md](./docs/API_REFERENCE.md)
 
 ## 定时任务
 
@@ -382,7 +391,10 @@ pytest --cov=app --cov-report=html tests/
 - `test_vehicle_crud.py` - 车辆 CRUD 测试 (2 个测试)
 - `test_date_range.py` - 日期范围测试 (3 个测试)
 - `test_plan_mos_archiving_regression.py` - 归档功能测试 (1 个测试)
-- `test_timestamp_update.py` - 时间戳更新测试 (4 个测试)
+- `test_timestamp_update.py` - 时间戳更新测试 (7 个测试) ⭐ 更新
+- `test_show_deleted.py` - 软删除查询测试 (1 个测试) 🆕 新增
+
+**总计**: 23 个测试，全部通过 ✅
 
 ### 代码规范
 - 使用 Python 类型注解
@@ -417,4 +429,17 @@ pytest --cov=app --cov-report=html tests/
 
 
 
-*本文档最后更新时间: 2025-01-01*
+---
+
+## 最新更新
+
+### 2025-10-02
+- ✨ 新增全局常量管理模块 (`app/constants.py`)
+- 🔧 优化时间戳回写规则，支持精确的到达/出发场景区分
+- 🆕 添加软删除记录查询功能 (`show_deleted` 参数)
+- 📝 完善 API 文档和测试覆盖
+- 详细更新日志: [CHANGELOG.md](./docs/CHANGELOG.md)
+
+---
+
+*本文档最后更新时间: 2025-10-02*

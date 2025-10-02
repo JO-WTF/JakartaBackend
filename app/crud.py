@@ -504,6 +504,7 @@ def search_dn_list(
     project_request: str | None = None,
     last_modified_from: datetime | None = None,
     last_modified_to: datetime | None = None,
+    show_deleted: bool = False,
     page: int = 1,
     page_size: int | None = 20,
 ) -> Tuple[int, List[DN]]:
@@ -521,8 +522,11 @@ def search_dn_list(
         .outerjoin(
             latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
         )
-        .filter(_ACTIVE_DN_EXPR)
     )
+    
+    # Apply deleted filter based on show_deleted parameter
+    if not show_deleted:
+        base_q = base_q.filter(_ACTIVE_DN_EXPR)
     latest_record_expr = func.coalesce(
         latest_record_subq.c.latest_record_created_at, DN.created_at
     )

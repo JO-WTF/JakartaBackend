@@ -136,8 +136,9 @@ JakartaBackend 提供 RESTful API 用于物流配送单据 (DN) 管理和车辆�
 - `date[]` (string[], 可选): 日期范围，格式 `["2025-01-01", "2025-01-31"]`
 - `status_not_empty` (boolean, 可选): 是否过滤空状态
 - `has_coordinate` (boolean, 可选): 是否有坐标信息
+- `show_deleted` (boolean, 可选): 是否显示已软删除的记录，默认 `false`
 - `page` (int, 可选): 页码，默认 1
-- `page_size` (int, 可选): 每页数量，默认 20
+- `page_size` (int/string, 可选): 每页数量，默认 20，可设置为 `"all"` 获取所有记录
 
 **响应**:
 ```json
@@ -148,6 +149,30 @@ JakartaBackend 提供 RESTful API 用于物流配送单据 (DN) 管理和车辆�
   "page_size": 20,
   "items": [...]
 }
+```
+
+**新功能说明**:
+
+1. **软删除过滤** (`show_deleted`):
+   - `false` (默认): 只返回未删除的记录
+   - `true`: 返回所有记录，包括已软删除的记录 (`is_deleted = "Y"`)
+   - 用于管理员查看已删除数据或数据审计
+
+2. **无限分页** (`page_size="all"`):
+   - 设置 `page_size=all` 可获取所有匹配记录
+   - 自动将 `page` 设置为 1
+   - 最大限制 2000 条（超过需使用 `"all"`）
+
+**使用示例**:
+```bash
+# 显示已删除记录
+GET /api/dn/list/search?show_deleted=true
+
+# 获取所有 POD 状态的记录（包括已删除）
+GET /api/dn/list/search?status=POD&show_deleted=true&page_size=all
+
+# 标准查询（不含已删除）
+GET /api/dn/list/search?status=POD&page=1&page_size=20
 ```
 
 ---
@@ -317,13 +342,25 @@ Status: 404
 - 自动创建 DN 记录历史
 - 如果提供坐标和照片,同时存储
 - 如果 DN 在 Google Sheets 中,自动同步 `status_delivery` 回表格
-- 自动写入时间戳到 Google Sheet:
-  - 当状态为 `ARRIVED AT SITE` (不区分大小写) 时,写入当前时间到 **S 列** (`actual_arrive_time_ata`)
-  - 当状态为其他值时,写入当前时间到 **R 列** (`actual_depart_from_start_point_atd`)
+- **自动写入时间戳到 Google Sheet**:
+  - **到达时间戳** (写入 **S 列** `actual_arrive_time_ata`):
+    - `ARRIVED AT SITE` - 到达 site
+    - `ARRIVED AT XD/PM` - 到达 XD/PM
+  - **出发时间戳** (写入 **R 列** `actual_depart_from_start_point_atd`):
+    - `TRANSPORTING FROM WH` - 从 WH 出发
+    - `TRANSPORTING FROM XD/PM` - 从 XD/PM 出发
+  - 其他状态（如 `POD`、`ON THE WAY` 等）不会触发时间戳写入
   - 时间格式: `M/D/YYYY H:MM:SS` (GMT+7),例如: `10/2/2025 7:10:00`
+  - 状态匹配不区分大小写
 - 所有修改的单元格会自动添加:
   - 备注: "Modified by Fast Tracker ({updated_by})" （显示操作者名称）
   - 链接: https://idnsc.dpdns.org/admin
+
+**重要提示**:
+- 上传 `POD` 状态时，建议同时提供 `delivery_status="POD"` 以保持数据一致性
+- 如果不提供 `delivery_status`，系统会根据 `status` 自动设置:
+  - `status="ARRIVED AT SITE"` → `delivery_status="On Site"`
+  - 其他状态 → `delivery_status="On the way"`
 
 ---
 
