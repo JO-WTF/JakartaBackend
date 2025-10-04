@@ -65,7 +65,7 @@ def update_dn(
     lng: str | float | None = Form(None),
     lat: str | float | None = Form(None),
     updated_by: str | None = Form(None),
-    phone_number: str | None = Form(None, alias="phoneNumber"),
+    phone_number: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     dn_number = normalize_dn(dnNumber)
