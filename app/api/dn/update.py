@@ -65,6 +65,7 @@ def update_dn(
     lng: str | float | None = Form(None),
     lat: str | float | None = Form(None),
     updated_by: str | None = Form(None),
+    phone_number: str | None = Form(None, alias="phoneNumber"),
     db: Session = Depends(get_db),
 ):
     dn_number = normalize_dn(dnNumber)
@@ -87,6 +88,10 @@ def update_dn(
 
     delivery_status_raw = delivery_status if delivery_status is not None else status_delivery
     delivery_status_value = (delivery_status_raw or "").strip() or None
+
+    phone_number_value = None
+    if isinstance(phone_number, str):
+        phone_number_value = phone_number.strip() or None
 
     if delivery_status_value is None:
         delivery_status_value = _derive_status_delivery_from_status(status)
@@ -121,6 +126,8 @@ def update_dn(
         ensure_payload["status_delivery"] = delivery_status_value
     if updated_by_value is not None:
         ensure_payload["last_updated_by"] = updated_by_value
+    if phone_number_value is not None:
+        ensure_payload["driver_contact_number"] = phone_number_value
 
     status_upper = (status or "").strip().upper()
     timestamp_value: str | None = None
@@ -142,6 +149,7 @@ def update_dn(
         lng=lng_val,
         lat=lat_val,
         updated_by=updated_by_value,
+        phone_number=phone_number_value,
     )
 
     gspread_update_result: dict[str, Any] | None = None
@@ -229,11 +237,13 @@ def edit_dn_record(
     status: Optional[str] = Form(None),
     remark: Optional[str] = Form(None),
     updated_by: Optional[str] = Form(None),
+    phone_number: Optional[str] = Form(None, alias="phoneNumber"),
     photo: UploadFile | None = File(None),
     json_body: Optional[dict] = Body(None),
     db: Session = Depends(get_db),
 ):
     updated_by_provided = updated_by is not None
+    phone_number_provided = phone_number is not None
 
     if json_body and isinstance(json_body, dict):
         if "status" in json_body:
@@ -243,6 +253,12 @@ def edit_dn_record(
         if "updated_by" in json_body:
             updated_by = json_body.get("updated_by")
             updated_by_provided = True
+        if "phone_number" in json_body:
+            phone_number = json_body.get("phone_number")
+            phone_number_provided = True
+        elif "phoneNumber" in json_body:
+            phone_number = json_body.get("phoneNumber")
+            phone_number_provided = True
 
     if status is not None and status.strip() == "":
         status = None
@@ -257,6 +273,11 @@ def edit_dn_record(
         updated_by = updated_by.strip() or None
     elif updated_by_provided and updated_by is not None:
         updated_by = str(updated_by)
+
+    if isinstance(phone_number, str):
+        phone_number = phone_number.strip() or None
+    elif phone_number_provided and phone_number is not None:
+        phone_number = str(phone_number)
 
     if status is not None and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
@@ -274,6 +295,8 @@ def edit_dn_record(
         photo_url=photo_url,
         updated_by=updated_by,
         updated_by_set=updated_by_provided,
+        phone_number=phone_number,
+        phone_number_set=phone_number_provided,
     )
     if not rec:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -287,6 +310,8 @@ def edit_dn_record(
     }
     if updated_by_provided:
         ensure_payload["last_updated_by"] = rec.updated_by
+    if phone_number_provided:
+        ensure_payload["driver_contact_number"] = rec.phone_number
 
     ensure_dn(db, rec.dn_number, **ensure_payload)
     return {"ok": True, "id": rec.id}

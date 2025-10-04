@@ -83,6 +83,7 @@ class DNRecord(Base):
     lng = Column(String(20), nullable=True)
     lat = Column(String(20), nullable=True)
     updated_by = Column(String(128), nullable=True)
+    phone_number = Column(String(32), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

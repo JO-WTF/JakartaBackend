@@ -199,6 +199,7 @@ def add_dn_record(
     lat: str | None,
     du_id: str | None = None,
     updated_by: str | None = None,
+    phone_number: str | None = None,
 ) -> DNRecord:
     rec = DNRecord(
         dn_number=dn_number,
@@ -209,6 +210,7 @@ def add_dn_record(
         lng=lng,
         lat=lat,
         updated_by=updated_by,
+        phone_number=phone_number,
     )
     db.add(rec)
     db.commit()
@@ -225,6 +227,8 @@ def add_dn_record(
     }
     if updated_by is not None:
         ensure_payload["last_updated_by"] = updated_by
+    if phone_number is not None:
+        ensure_payload["driver_contact_number"] = phone_number
 
     ensure_dn(
         db,
@@ -343,6 +347,8 @@ def update_dn_record(
     du_id_set: bool = False,
     updated_by: Optional[str] = None,
     updated_by_set: bool = False,
+    phone_number: Optional[str] = None,
+    phone_number_set: bool = False,
 ) -> Optional[DNRecord]:
     obj = db.query(DNRecord).get(rec_id)
     if not obj:
@@ -362,6 +368,10 @@ def update_dn_record(
         obj.updated_by = updated_by
     elif updated_by is not None:
         obj.updated_by = updated_by
+    if phone_number_set:
+        obj.phone_number = phone_number
+    elif phone_number is not None:
+        obj.phone_number = phone_number
 
     db.add(obj)
     db.commit()

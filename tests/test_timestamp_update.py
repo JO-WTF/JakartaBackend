@@ -16,7 +16,7 @@ os.environ.setdefault("STORAGE_DISK_PATH", "/tmp/test_uploads")
 from app.core.sheet import sync_status_timestamp_to_sheet  # noqa: E402
 from app.utils.time import TZ_GMT7  # noqa: E402
 from app.db import Base  # noqa: E402
-from app.models import DN  # noqa: E402
+from app.models import DN, DNRecord  # noqa: E402
 from app.api.dn.update import update_dn  # noqa: E402
 from app.dn_columns import ensure_dynamic_columns_loaded  # noqa: E402
 
@@ -290,6 +290,7 @@ class TestTimestampUpdate:
             lng=None,
             lat=None,
             updated_by="tester",
+            phone_number="0812345678",
             db=db_session,
         )
 
@@ -298,6 +299,9 @@ class TestTimestampUpdate:
         stored = db_session.query(DN).filter(DN.dn_number == "DN001").one()
         assert stored.actual_arrive_time_ata == "10/2/2025 7:10:00"
         assert stored.actual_depart_from_start_point_atd is None
+
+        record = db_session.query(DNRecord).filter(DNRecord.dn_number == "DN001").one()
+        assert record.phone_number == "0812345678"
 
     @patch("app.api.dn.update.datetime")
     def test_update_dn_sets_departure_timestamp_in_db(self, mock_datetime, db_session):
@@ -313,6 +317,7 @@ class TestTimestampUpdate:
             lng=None,
             lat=None,
             updated_by="tester",
+            phone_number="0898765432",
             db=db_session,
         )
 
@@ -321,3 +326,12 @@ class TestTimestampUpdate:
         stored = db_session.query(DN).filter(DN.dn_number == "DN002").one()
         assert stored.actual_depart_from_start_point_atd == "11/3/2025 14:05:03"
         assert stored.actual_arrive_time_ata is None
+
+        record = (
+            db_session.query(DNRecord)
+            .filter(DNRecord.dn_number == "DN002")
+            .order_by(DNRecord.id.desc())
+            .first()
+        )
+        assert record is not None
+        assert record.phone_number == "0898765432"
