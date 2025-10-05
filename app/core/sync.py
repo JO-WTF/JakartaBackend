@@ -367,6 +367,15 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         if existing_dn:
             changed_fields: dict[str, Any] = {}
             for key, value in non_null_fields.items():
+                # Protect driver_contact_number from being overwritten if DN has been updated
+                if key == "driver_contact_number" and (existing_dn.update_count or 0) > 0:
+                    # Skip this field - don't allow Google Sheet to overwrite it
+                    dn_sync_logger.debug(
+                        "Skipping driver_contact_number update for DN %s (update_count=%d > 0)",
+                        number,
+                        existing_dn.update_count
+                    )
+                    continue
                 if not _values_match(getattr(existing_dn, key, None), value):
                     changed_fields[key] = value
             change_detection_total += perf_counter() - comparison_start
