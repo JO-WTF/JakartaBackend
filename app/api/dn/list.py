@@ -84,6 +84,8 @@ async def get_dn_list(db: Session = Depends(get_db)):
             "last_updated_by": it.last_updated_by,
             "gs_sheet": it.gs_sheet,
             "gs_row": it.gs_row,
+            "is_deleted": it.is_deleted,
+            "update_count": it.update_count,
         }
         for column in sheet_columns:
             if column == "dn_number":
@@ -194,6 +196,8 @@ def search_dn_list_api(
             "last_updated_by": it.last_updated_by,
             "gs_sheet": it.gs_sheet,
             "gs_row": it.gs_row,
+            "is_deleted": it.is_deleted,
+            "update_count": it.update_count,
         }
         for column in sheet_columns:
             if column == "dn_number":
@@ -263,6 +267,8 @@ def batch_search_dn_list(
             "last_updated_by": it.last_updated_by,
             "gs_sheet": it.gs_sheet,
             "gs_row": it.gs_row,
+            "is_deleted": it.is_deleted,
+            "update_count": it.update_count,
         }
         for column in sheet_columns:
             if column == "dn_number":
