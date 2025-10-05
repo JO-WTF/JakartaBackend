@@ -62,6 +62,7 @@ def search_dn_records_api(
                 "lng": it.lng,
                 "lat": it.lat,
                 "updated_by": it.updated_by,
+                "phone_number": it.phone_number,
                 "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
@@ -97,6 +98,7 @@ def batch_get_dn_records(
                 "lng": it.lng,
                 "lat": it.lat,
                 "updated_by": it.updated_by,
+                "phone_number": it.phone_number,
                 "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
@@ -123,6 +125,7 @@ def get_dn_records(dn_number: str, db: Session = Depends(get_db)):
                 "lng": it.lng,
                 "lat": it.lat,
                 "updated_by": it.updated_by,
+                "phone_number": it.phone_number,
                 "created_at": to_gmt7_iso(it.created_at),
             }
             for it in items
