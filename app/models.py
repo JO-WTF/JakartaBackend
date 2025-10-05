@@ -70,6 +70,7 @@ class DN(Base):
     last_updated_by = Column(Text, nullable=True)
     gs_sheet = Column(Text, nullable=True)
     gs_row = Column(Integer, nullable=True)
+    update_count = Column(Integer, nullable=False, default=0, server_default="0")
 
 
 class DNRecord(Base):

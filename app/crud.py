@@ -230,11 +230,15 @@ def add_dn_record(
     if phone_number is not None:
         ensure_payload["driver_contact_number"] = phone_number
 
-    ensure_dn(
+    # Increment update_count
+    dn = ensure_dn(
         db,
         dn_number,
         **ensure_payload,
     )
+    dn.update_count = (dn.update_count or 0) + 1
+    db.add(dn)
+    db.commit()
     db.refresh(rec)
     return rec
 
