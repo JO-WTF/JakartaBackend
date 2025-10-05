@@ -15,6 +15,7 @@ from app.crud import (
     get_dn_unique_field_values,
     get_dn_latest_update_snapshots,
     list_status_delivery_lsp_stats,
+    get_driver_stats,
 )
 from app.db import get_db
 from app.schemas.dn import (
@@ -25,6 +26,8 @@ from app.schemas.dn import (
     StatusDeliveryLspSummaryHistoryData,
     StatusDeliveryLspSummaryHistoryResponse,
     StatusDeliveryLspUpdateRecord,
+    DriverStatsRecord,
+    DriverStatsResponse,
 )
 from app.constants import STANDARD_STATUS_DELIVERY_VALUES
 from app.utils.time import TZ_GMT7
@@ -279,4 +282,39 @@ def get_status_delivery_lsp_summary_records(
             by_plan_mos_date=plan_mos_records,
             by_update_date=update_summary,
         )
+    )
+
+
+@router.get(
+    "/status/by-driver",
+    response_model=DriverStatsResponse,
+)
+def get_driver_statistics(
+    phone_number: Optional[str] = Query(default=None, description="Filter by specific phone number"),
+    db: Session = Depends(get_db),
+):
+    """
+    统计各个司机（按 phone_number）的 DN 处理情况。
+    
+    统计规则：
+    - 仅统计 phone_number 非空的记录
+    - 一个 DN 下面，相同 status 的记录只计算一次
+    - 返回每个司机的唯一 DN 数量和去重后的记录数量
+    """
+    normalized_phone = phone_number.strip() if phone_number else None
+    
+    stats = get_driver_stats(db, phone_number=normalized_phone)
+    
+    data = [
+        DriverStatsRecord(
+            phone_number=phone,
+            unique_dn_count=unique_dn,
+            record_count=record_count,
+        )
+        for phone, unique_dn, record_count in stats
+    ]
+    
+    return DriverStatsResponse(
+        data=data,
+        total_drivers=len(data),
     )

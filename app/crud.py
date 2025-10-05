@@ -959,3 +959,48 @@ def list_status_delivery_lsp_stats(
         .limit(limit)
         .all()
     )
+
+
+def get_driver_stats(
+    db: Session,
+    *,
+    phone_number: Optional[str] = None,
+) -> List[Tuple[str, int, int]]:
+    """
+    统计各个 phone_number 下的唯一 DN 数量和记录数量。
+    
+    注意：一个 DN 下面，status 重复的记录只计算一次。
+    
+    Returns:
+        List of tuples: (phone_number, unique_dn_count, record_count)
+    """
+    # 使用子查询去重：对每个 (dn_number, phone_number, status) 组合只计算一次
+    subquery = (
+        db.query(
+            DNRecord.phone_number,
+            DNRecord.dn_number,
+            DNRecord.status,
+        )
+        .filter(DNRecord.phone_number.isnot(None))
+        .filter(DNRecord.phone_number != "")
+        .distinct()
+        .subquery()
+    )
+    
+    # 统计每个 phone_number 的唯一 DN 数量和记录数量
+    query = db.query(
+        subquery.c.phone_number,
+        func.count(func.distinct(subquery.c.dn_number)).label("unique_dn_count"),
+        func.count().label("record_count"),
+    ).group_by(subquery.c.phone_number)
+    
+    # 如果指定了 phone_number，则过滤
+    if phone_number:
+        trimmed = phone_number.strip()
+        if trimmed:
+            query = query.filter(subquery.c.phone_number == trimmed)
+    
+    # 按唯一 DN 数量降序排序
+    query = query.order_by(func.count(func.distinct(subquery.c.dn_number)).desc())
+    
+    return query.all()

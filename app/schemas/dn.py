@@ -17,6 +17,8 @@ __all__ = [
     "StatusDeliveryLspUpdateRecord",
     "StatusDeliveryLspSummaryHistoryData",
     "StatusDeliveryLspSummaryHistoryResponse",
+    "DriverStatsRecord",
+    "DriverStatsResponse",
 ]
 
 
@@ -95,3 +97,17 @@ class StatusDeliveryLspSummaryHistoryResponse(BaseModel):
     data: StatusDeliveryLspSummaryHistoryData = Field(
         ..., description="Historical status-delivery data broken down by Plan MOS date and update hour"
     )
+
+
+class DriverStatsRecord(BaseModel):
+    phone_number: str = Field(..., description="Driver phone number")
+    unique_dn_count: int = Field(..., ge=0, description="Number of unique DN numbers handled by the driver")
+    record_count: int = Field(..., ge=0, description="Total number of unique (DN, status) records for the driver")
+
+
+class DriverStatsResponse(BaseModel):
+    ok: bool = Field(True, description="Whether the request succeeded")
+    data: List[DriverStatsRecord] = Field(
+        ..., description="Driver statistics grouped by phone number"
+    )
+    total_drivers: int = Field(..., ge=0, description="Total number of drivers with records")
