@@ -23,15 +23,15 @@ def db_session():
     db = SessionLocal()
     try:
         # Clean up any existing test data
-        db.query(DNRecord).filter(DNRecord.dn_number == "TEST_DN_RECORD_001").delete(synchronize_session=False)
-        db.query(DN).filter(DN.dn_number == "TEST_DN_RECORD_001").delete(synchronize_session=False)
+        db.query(DNRecord).filter(DNRecord.dn_number.like("TEST_DN_RECORD_%")).delete(synchronize_session=False)
+        db.query(DN).filter(DN.dn_number.like("TEST_DN_RECORD_%")).delete(synchronize_session=False)
         db.commit()
         yield db
     finally:
         # Clean up after test
         db.rollback()
-        db.query(DNRecord).filter(DNRecord.dn_number == "TEST_DN_RECORD_001").delete(synchronize_session=False)
-        db.query(DN).filter(DN.dn_number == "TEST_DN_RECORD_001").delete(synchronize_session=False)
+        db.query(DNRecord).filter(DNRecord.dn_number.like("TEST_DN_RECORD_%")).delete(synchronize_session=False)
+        db.query(DN).filter(DN.dn_number.like("TEST_DN_RECORD_%")).delete(synchronize_session=False)
         db.commit()
         db.close()
 
@@ -134,6 +134,66 @@ def test_dn_search_returns_all_fields(db_session: Session):
     # Verify all fields are present
     assert record["dn_number"] == "TEST_DN_RECORD_001"
     assert record["phone_number"] == "081234567890"
+
+
+def test_dn_search_filters_by_phone_number(db_session: Session):
+    """Test that GET /api/dn/search filters results by phone_number."""
+
+    ensure_dn(
+        db_session,
+        "TEST_DN_RECORD_001",
+        lsp="Test LSP",
+    )
+    ensure_dn(
+        db_session,
+        "TEST_DN_RECORD_002",
+        lsp="Test LSP",
+    )
+
+    add_dn_record(
+        db_session,
+        dn_number="TEST_DN_RECORD_001",
+        status="ARRIVED",
+        remark="Phone A",
+        photo_url=None,
+        lng=None,
+        lat=None,
+        du_id=None,
+        updated_by="Tester",
+        phone_number="081234567890",
+    )
+    add_dn_record(
+        db_session,
+        dn_number="TEST_DN_RECORD_002",
+        status="ARRIVED",
+        remark="Phone B",
+        photo_url=None,
+        lng=None,
+        lat=None,
+        du_id=None,
+        updated_by="Tester",
+        phone_number="089876543210",
+    )
+
+    response = client.get(
+        "/api/dn/search",
+        params={"phone_number": "089876543210"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert len(data["items"]) == 1
+    assert data["items"][0]["dn_number"] == "TEST_DN_RECORD_002"
+
+    response_trimmed = client.get(
+        "/api/dn/search",
+        params={"phone_number": " 081234567890 "},
+    )
+    assert response_trimmed.status_code == 200
+    data_trimmed = response_trimmed.json()
+    assert data_trimmed["total"] == 1
+    assert len(data_trimmed["items"]) == 1
+    assert data_trimmed["items"][0]["dn_number"] == "TEST_DN_RECORD_001"
 
 
 def test_dn_batch_returns_all_fields(db_session: Session):

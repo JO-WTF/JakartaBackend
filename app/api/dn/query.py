@@ -23,6 +23,7 @@ def search_dn_records_api(
     dn_number: Optional[str] = Query(None, description="精确 DN number"),
     status: Optional[str] = Query(None, description=f"状态过滤，可选: {VALID_STATUS_DESCRIPTION}"),
     remark: Optional[str] = Query(None, description="备注关键词(模糊)"),
+    phone_number: Optional[str] = Query(None, description="司机联系电话"),
     has_photo: Optional[bool] = Query(None, description="是否必须带附件 true/false"),
     date_from: Optional[datetime] = Query(None, description="起始时间(ISO 8601)"),
     date_to: Optional[datetime] = Query(None, description="结束时间(ISO 8601)"),
@@ -35,11 +36,14 @@ def search_dn_records_api(
         if not DN_RE.fullmatch(dn_number):
             raise HTTPException(status_code=400, detail=f"Invalid DN number: {dn_number}")
 
+    phone_number_value = phone_number.strip() if isinstance(phone_number, str) and phone_number.strip() else None
+
     total, items = search_dn_records(
         db,
         dn_number=dn_number,
         status=status,
         remark_keyword=remark,
+        phone_number=phone_number_value,
         has_photo=has_photo,
         date_from=date_from,
         date_to=date_to,

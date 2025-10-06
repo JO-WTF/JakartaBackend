@@ -300,6 +300,7 @@ def search_dn_records(
     du_id: Optional[str] = None,
     status: Optional[str] = None,
     remark_keyword: Optional[str] = None,
+    phone_number: Optional[str] = None,
     has_photo: Optional[bool] = None,
     date_from=None,
     date_to=None,
@@ -316,6 +317,10 @@ def search_dn_records(
         conds.append(DNRecord.status == status)
     if remark_keyword:
         conds.append(DNRecord.remark.ilike(f"%{remark_keyword}%"))
+    if isinstance(phone_number, str):
+        trimmed_phone = phone_number.strip()
+        if trimmed_phone:
+            conds.append(func.trim(DNRecord.phone_number) == trimmed_phone)
     if has_photo is True:
         conds.append(DNRecord.photo_url.isnot(None))
     elif has_photo is False:
