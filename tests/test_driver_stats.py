@@ -97,7 +97,7 @@ def test_driver_stats_basic(db_session: Session):
     )
     
     # Call the API
-    response = client.get("/api/dn/status-delivery/by-driver")
+    response = client.get("/api/dn/status/by-driver")
     
     # Verify response
     assert response.status_code == 200
@@ -163,7 +163,7 @@ def test_driver_stats_duplicate_status(db_session: Session):
     )
     
     # Call the API
-    response = client.get("/api/dn/status-delivery/by-driver")
+    response = client.get("/api/dn/status/by-driver")
     
     # Verify response
     assert response.status_code == 200
@@ -217,7 +217,7 @@ def test_driver_stats_filter_by_phone(db_session: Session):
     )
     
     # Call the API with phone filter
-    response = client.get("/api/dn/status-delivery/by-driver", params={"phone_number": "081111111111"})
+    response = client.get("/api/dn/status/by-driver", params={"phone_number": "081111111111"})
     
     # Verify response
     assert response.status_code == 200
@@ -276,7 +276,7 @@ def test_driver_stats_excludes_null_phone(db_session: Session):
     )
     
     # Call the API
-    response = client.get("/api/dn/status-delivery/by-driver")
+    response = client.get("/api/dn/status/by-driver")
     
     # Verify response
     assert response.status_code == 200

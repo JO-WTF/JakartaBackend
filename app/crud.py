@@ -5,7 +5,7 @@ import json
 from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence, Literal
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, or_, case
+from sqlalchemy import and_, func, or_, case, exists
 from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat
 from .dn_columns import (
     filter_assignable_dn_fields,
@@ -512,6 +512,7 @@ def search_dn_list(
     plan_mos_dates: Sequence[str] | None = None,
     dn_number: str | None = None,
     du_id: str | None = None,
+    phone_number: str | None = None,
     status_values: Sequence[str] | None = None,
     status_delivery_values: Sequence[str] | None = None,
     status_not_empty: bool | None = None,
@@ -564,6 +565,20 @@ def search_dn_list(
         conds.append(DN.dn_number == dn_number)
     if du_id:
         conds.append(DN.du_id == du_id)
+    trimmed_phone_number = phone_number.strip() if isinstance(phone_number, str) else None
+    if trimmed_phone_number:
+        phone_match_exists = exists().where(
+            and_(
+                DNRecord.dn_number == DN.dn_number,
+                func.trim(DNRecord.phone_number) == trimmed_phone_number,
+            )
+        ).correlate(DN)
+        conds.append(
+            or_(
+                func.trim(DN.driver_contact_number) == trimmed_phone_number,
+                phone_match_exists,
+            )
+        )
     normalized_status_values = [
         value.strip().lower()
         for value in (status_values or [])

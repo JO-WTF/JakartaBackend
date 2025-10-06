@@ -104,6 +104,7 @@ def search_dn_list_api(
     dn_number: str | None = Query(None, description="DN number"),
     dnnumber_legacy: str | None = Query(None, alias="dnnumber", description="DN number (legacy alias)", include_in_schema=False),
     du_id: str | None = Query(None, description="关联 DU ID"),
+    phone_number: str | None = Query(None, description="Driver phone number"),
     status_delivery: Optional[List[str]] = Query(None, description="Status delivery"),
     status_delivery_legacy: Optional[List[str]] = Query(
         None, alias="statusDelivery", description="Status delivery (legacy alias)", include_in_schema=False
@@ -152,6 +153,7 @@ def search_dn_list_api(
     subcon_values = _collect_query_values(subcon)
     area_value = area.strip() if area else None
     project_value = project.strip() if project else None
+    phone_number_value = phone_number.strip() if isinstance(phone_number, str) and phone_number.strip() else None
     modified_from, modified_to = parse_gmt7_date_range(date_from, date_to)
 
     total, items = search_dn_list(
@@ -159,6 +161,7 @@ def search_dn_list_api(
         plan_mos_dates=plan_mos_dates,
         dn_number=dn_number,
         du_id=du_id,
+        phone_number=phone_number_value,
         status_delivery_values=status_delivery_values,
         status_values=status_values,
         status_not_empty=status_not_empty,

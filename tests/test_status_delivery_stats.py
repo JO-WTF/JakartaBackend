@@ -252,6 +252,67 @@ def test_search_dn_list_excludes_deleted(db_session):
     assert [item.dn_number for item in items] == ["ACTIVE-1"]
 
 
+def test_search_dn_list_filters_by_phone_number(db_session):
+    _create_dn(
+        db_session,
+        dn_number="DN-PHONE-1",
+        lsp="Alpha",
+        plan_mos_date="01 Jan 25",
+        status="Delivered",
+        status_delivery="POD",
+    )
+    _create_dn(
+        db_session,
+        dn_number="DN-PHONE-2",
+        lsp="Beta",
+        plan_mos_date="02 Jan 25",
+        status="In Transit",
+        status_delivery="On Site",
+    )
+    db_session.commit()
+
+    db_session.add_all(
+        [
+            DNRecord(
+                dn_number="DN-PHONE-1",
+                status="Delivered",
+                phone_number="081234567890",
+            ),
+            DNRecord(
+                dn_number="DN-PHONE-2",
+                status="In Transit",
+                phone_number="089876543210",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    # phone number stored on associated DNRecord
+    total, items = search_dn_list(
+        db_session,
+        phone_number="089876543210",
+        page=1,
+        page_size=None,
+    )
+    assert total == 1
+    assert [item.dn_number for item in items] == ["DN-PHONE-2"]
+
+    # ensure trimming is applied when matching driver_contact_number
+    dn_one = db_session.query(DN).filter(DN.dn_number == "DN-PHONE-1").one()
+    dn_one.driver_contact_number = "081234567890"
+    db_session.add(dn_one)
+    db_session.commit()
+
+    total_trimmed, items_trimmed = search_dn_list(
+        db_session,
+        phone_number=" 081234567890 ",
+        page=1,
+        page_size=None,
+    )
+    assert total_trimmed == 1
+    assert [item.dn_number for item in items_trimmed] == ["DN-PHONE-1"]
+
+
 def test_get_status_delivery_lsp_summary_records(db_session, monkeypatch):
     from app.api.dn.stats import get_status_delivery_lsp_summary_records
 
