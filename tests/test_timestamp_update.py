@@ -13,12 +13,12 @@ os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test?ssl
 os.environ.setdefault("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS", "{}")
 os.environ.setdefault("STORAGE_DISK_PATH", "/tmp/test_uploads")
 
-from app.core.sheet import sync_status_timestamp_to_sheet  # noqa: E402
+from app.core.sheet import sync_delivery_status_to_sheet, sync_status_timestamp_to_sheet  # noqa: E402
 from app.utils.time import TZ_GMT7  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.models import DN, DNRecord  # noqa: E402
 from app.api.dn.update import update_dn  # noqa: E402
-from app.dn_columns import ensure_dynamic_columns_loaded  # noqa: E402
+from app.dn_columns import ensure_dynamic_columns_loaded, get_sheet_columns  # noqa: E402
 
 
 @pytest.fixture
@@ -335,3 +335,86 @@ class TestTimestampUpdate:
         )
         assert record is not None
         assert record.phone_number == "0898765432"
+
+    @patch('app.core.sheet.create_gspread_client')
+    def test_delivery_status_search_prefers_last_match(self, mock_gspread):
+        column_names = get_sheet_columns()
+        status_col = column_names.index("status_delivery") + 1
+        dn_col = column_names.index("dn_number") + 1
+
+        mock_client = MagicMock()
+        mock_spreadsheet = MagicMock()
+        mock_worksheet = MagicMock()
+
+        mock_gspread.return_value = mock_client
+        mock_client.open_by_url.return_value = mock_spreadsheet
+        mock_spreadsheet.worksheet.return_value = mock_worksheet
+
+        def cell_side_effect(row, col):
+            if row == 4 and col == dn_col:
+                return MagicMock(value="MISMATCH")
+            if row == 4 and col == status_col:
+                return MagicMock(value="Old")
+            return MagicMock(value="")
+
+        mock_worksheet.cell.side_effect = cell_side_effect
+        mock_worksheet.col_values.return_value = ["HEADER", "DN123", "DN123", "DN123"]
+        mock_worksheet.update_cell = MagicMock()
+        mock_worksheet.insert_note = MagicMock()
+        mock_worksheet.format = MagicMock()
+
+        result = sync_delivery_status_to_sheet(
+            sheet_name="Plan MOS Test",
+            row_index=4,
+            dn_number="DN123",
+            new_value="On the way",
+            updated_by="tester",
+        )
+
+        assert result is not None
+        assert result.get("row") == 4
+        assert mock_worksheet.update_cell.call_args[0][0] == 4
+        assert result.get("search_matches") == [2, 3, 4]
+
+    @patch('app.core.sheet.create_gspread_client')
+    @patch('app.core.sheet.datetime')
+    def test_timestamp_search_prefers_last_match(self, mock_datetime, mock_gspread):
+        mock_time = datetime(2025, 10, 2, 7, 10, 0, tzinfo=TZ_GMT7)
+        mock_datetime.now.return_value = mock_time
+        column_names = get_sheet_columns()
+        target_col = column_names.index("actual_arrive_time_ata") + 1
+        dn_col = column_names.index("dn_number") + 1
+
+        mock_client = MagicMock()
+        mock_spreadsheet = MagicMock()
+        mock_worksheet = MagicMock()
+
+        mock_gspread.return_value = mock_client
+        mock_client.open_by_url.return_value = mock_spreadsheet
+        mock_spreadsheet.worksheet.return_value = mock_worksheet
+
+        def cell_side_effect(row, col):
+            if row == 5 and col == dn_col:
+                return MagicMock(value="WRONG")
+            return MagicMock(value="")
+
+        mock_worksheet.cell.side_effect = cell_side_effect
+        mock_worksheet.col_values.return_value = ["HEADER", "DN321", "DN321", "DN321", "DN321"]
+        mock_worksheet.update_cell = MagicMock()
+        mock_worksheet.insert_note = MagicMock()
+        mock_worksheet.format = MagicMock()
+
+        result = sync_status_timestamp_to_sheet(
+            sheet_name="Plan MOS Test",
+            row_index=5,
+            dn_number="DN321",
+            status="ARRIVED AT SITE",
+        )
+
+        assert result is not None
+        assert result.get("row") == 5
+        assert result.get("search_matches") == [2, 3, 4, 5]
+        assert result.get("column") == target_col
+        mock_worksheet.update_cell.assert_called_once()
+        assert mock_worksheet.update_cell.call_args[0][0] == 5
+        assert mock_worksheet.update_cell.call_args[0][1] == target_col

@@ -195,15 +195,18 @@ def sync_delivery_status_to_sheet(
                 search_details["search_error"] = str(search_exc)
                 return search_details
 
-            found_row_index: int | None = None
+            found_matches: list[int] = []
             for idx, value in enumerate(dn_column_values, start=1):
                 if normalize_dn(value or "") == dn_number:
-                    found_row_index = idx
-                    break
+                    found_matches.append(idx)
+
+            found_row_index: int | None = found_matches[-1] if found_matches else None
 
             if found_row_index is None:
                 search_details["search_result"] = "dn_number not found in sheet"
                 return search_details
+
+            search_details["search_matches"] = found_matches
 
             try:
                 cell = worksheet.cell(found_row_index, status_column_position)
@@ -222,6 +225,8 @@ def sync_delivery_status_to_sheet(
                 "found_via_search": True,
                 "original_row_mismatch": row_index,
             }
+            if found_matches:
+                update_details["search_matches"] = found_matches
 
             normalized_current_value = (cell.value or "").strip()
             if normalized_current_value == new_value:
@@ -339,6 +344,8 @@ def sync_status_timestamp_to_sheet(
     
     column_names = get_sheet_columns()
     
+    found_matches: list[int] = []
+
     try:
         target_column_position = column_names.index(target_column_name) + 1
     except ValueError:
@@ -391,16 +398,18 @@ def sync_status_timestamp_to_sheet(
                 search_details["search_error"] = str(search_exc)
                 return search_details
             
-            found_row_index: int | None = None
             for idx, value in enumerate(dn_column_values, start=1):
                 if normalize_dn(value or "") == dn_number:
-                    found_row_index = idx
-                    break
+                    found_matches.append(idx)
+
+            found_row_index: int | None = found_matches[-1] if found_matches else None
             
             if found_row_index is None:
                 search_details["search_result"] = "dn_number not found in sheet"
                 return search_details
             
+            search_details["search_matches"] = found_matches
+
             # Update with found row
             row_index = found_row_index
         
@@ -422,7 +431,7 @@ def sync_status_timestamp_to_sheet(
         except Exception:  # pragma: no cover - gspread errors
             pass  # Don't fail the update if note/link fails
         
-        return {
+        result: dict[str, Any] = {
             "sheet": sheet_name,
             "row": row_index,
             "column": target_column_position,
@@ -431,6 +440,9 @@ def sync_status_timestamp_to_sheet(
             "status": status,
             "updated": True,
         }
+        if found_matches:
+            result["search_matches"] = found_matches
+        return result
         
     except Exception as exc:
         return {
