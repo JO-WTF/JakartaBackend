@@ -27,7 +27,7 @@ from app.models import DN
 from app.storage import save_file
 from app.utils.string import normalize_dn
 from app.utils.time import TZ_GMT7
-from app.utils.gspread import sync_dn_status_to_sheet  # Import the missing function
+from app.core.sheet import sync_dn_status_to_sheet
 
 router = APIRouter(prefix="/api/dn")
 
