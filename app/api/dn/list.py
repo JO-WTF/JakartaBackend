@@ -104,7 +104,6 @@ def search_dn_list_api(
     phone_number: str | None = Query(None, description="Driver phone number"),
     status_delivery: Optional[List[str]] = Query(None, description="Status delivery"),
     status_site: Optional[List[str]] = Query(None, description="Status site"),
-    status_delivery_legacy: Optional[List[str]] = Query(None, alias="statusDelivery", description="Status delivery (legacy alias)", include_in_schema=False),
     status_values_param: Optional[List[str]] = Query(None, alias="status", description="Status"),
     status_not_empty: bool | None = Query(None, description="仅返回状态不为空的 DN 记录"),
     has_coordinate: bool | None = Query(None, description="根据是否存在经纬度筛选 DN 记录"),
@@ -145,7 +144,7 @@ def search_dn_list_api(
             dn_numbers = None
 
     plan_mos_dates = _collect_query_values(date)
-    status_delivery_values = _collect_query_values(status_delivery, status_delivery_legacy)
+    status_delivery_values = _collect_query_values(status_delivery)
     status_values = _collect_query_values(status_values_param)
     lsp_values = _collect_query_values(lsp)
     region_values = _collect_query_values(region)
