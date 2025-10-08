@@ -515,7 +515,7 @@ def search_dn_list(
     db: Session,
     *,
     plan_mos_dates: Sequence[str] | None = None,
-    dn_number: str | None = None,
+    dn_numbers: Sequence[str] | None = None,
     du_id: str | None = None,
     phone_number: str | None = None,
     status_values: Sequence[str] | None = None,
@@ -566,8 +566,8 @@ def search_dn_list(
     ]
     if trimmed_plan_mos_dates:
         conds.append(func.trim(DN.plan_mos_date).in_(trimmed_plan_mos_dates))
-    if dn_number:
-        conds.append(DN.dn_number == dn_number)
+    if dn_numbers:
+        conds.append(DN.dn_number.in_(dn_numbers))
     if du_id:
         conds.append(DN.du_id == du_id)
     trimmed_phone_number = phone_number.strip() if isinstance(phone_number, str) else None

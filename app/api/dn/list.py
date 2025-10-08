@@ -9,13 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.constants import DN_RE
 from app.crud import get_latest_dn_records_map, list_all_dn_records, list_dn_by_dn_numbers, search_dn_list
 from app.db import get_db
 from app.dn_columns import get_sheet_columns
 from app.models import DN
 from app.utils.query import normalize_batch_dn_numbers
-from app.utils.string import normalize_dn
 from app.utils.time import parse_gmt7_date_range, to_gmt7_iso
 
 router = APIRouter(prefix="/api/dn")
@@ -101,8 +99,7 @@ async def get_dn_list(db: Session = Depends(get_db)):
 @router.get("/list/search")
 def search_dn_list_api(
     date: Optional[List[str]] = Query(None, description="Plan MOS date"),
-    dn_number: str | None = Query(None, description="DN number"),
-    dnnumber_legacy: str | None = Query(None, alias="dnnumber", description="DN number (legacy alias)", include_in_schema=False),
+    dn_number: Optional[List[str]] = Query(None, description="DN number (支持多个)"),
     du_id: str | None = Query(None, description="关联 DU ID"),
     phone_number: str | None = Query(None, description="Driver phone number"),
     status_delivery: Optional[List[str]] = Query(None, description="Status delivery"),
@@ -139,10 +136,14 @@ def search_dn_list_api(
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="Page size must be a number or 'all'")
 
-    dn_query_value = dn_number or dnnumber_legacy
-    dn_number = normalize_dn(dn_query_value) if dn_query_value else None
-    if dn_number and not DN_RE.fullmatch(dn_number):
-        raise HTTPException(status_code=400, detail="Invalid DN number")
+    # Process DN numbers - support multiple values
+    dn_numbers: list[str] | None = None
+    if dn_number:
+        try:
+            dn_numbers = normalize_batch_dn_numbers(dn_number)
+        except HTTPException:
+            # If no valid DN numbers, set to None instead of raising error
+            dn_numbers = None
 
     plan_mos_dates = _collect_query_values(date)
     status_delivery_values = _collect_query_values(status_delivery, status_delivery_legacy)
@@ -159,7 +160,7 @@ def search_dn_list_api(
     total, items = search_dn_list(
         db,
         plan_mos_dates=plan_mos_dates,
-        dn_number=dn_number,
+        dn_numbers=dn_numbers,
         du_id=du_id,
         phone_number=phone_number_value,
         status_delivery_values=status_delivery_values,
@@ -239,14 +240,11 @@ def get_all_dn_records(db: Session = Depends(get_db)):
 @router.get("/list/batch")
 def batch_search_dn_list(
     dn_number: Optional[List[str]] = Query(None, description="重复 dn_number 或逗号分隔"),
-    dnnumber_legacy: Optional[List[str]] = Query(
-        None, alias="dnnumber", description="重复 dn_number 或逗号分隔 (legacy alias)", include_in_schema=False
-    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    dn_numbers = normalize_batch_dn_numbers(dn_number, dnnumber_legacy)
+    dn_numbers = normalize_batch_dn_numbers(dn_number)
 
     total, items = list_dn_by_dn_numbers(db, dn_numbers, page=page, page_size=page_size)
 

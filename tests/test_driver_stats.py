@@ -2,41 +2,51 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
 
+from app.db import Base, get_db
 from app.main import app
-from app.models import DN, DNRecord
 from app.crud import ensure_dn, add_dn_record
-
-
-client = TestClient(app)
 
 
 @pytest.fixture
 def db_session():
-    """Create a test database session."""
-    from app.db import SessionLocal, engine, Base
+    """Create a test database session with in-memory SQLite."""
+    # Use in-memory SQLite database for testing
+    # connect_args={"check_same_thread": False} allows SQLite to be used across threads
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        future=True
+    )
+    Base.metadata.create_all(engine)
+    TestingSessionLocal = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, future=True
+    )
     
-    # Create tables
-    Base.metadata.create_all(bind=engine)
-    
-    db = SessionLocal()
+    session = TestingSessionLocal()
     try:
-        # Clean up any existing test data
-        db.query(DNRecord).filter(DNRecord.dn_number.like("TEST_DRIVER_%")).delete(synchronize_session=False)
-        db.query(DN).filter(DN.dn_number.like("TEST_DRIVER_%")).delete(synchronize_session=False)
-        db.commit()
-        yield db
+        yield session
     finally:
-        # Clean up after test
-        db.rollback()
-        db.query(DNRecord).filter(DNRecord.dn_number.like("TEST_DRIVER_%")).delete(synchronize_session=False)
-        db.query(DN).filter(DN.dn_number.like("TEST_DRIVER_%")).delete(synchronize_session=False)
-        db.commit()
-        db.close()
+        session.close()
 
 
-def test_driver_stats_basic(db_session: Session):
+@pytest.fixture
+def client(db_session):
+    """Create test client with test database."""
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+    
+    app.dependency_overrides[get_db] = override_get_db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def test_driver_stats_basic(db_session: Session, client):
     """Test basic driver statistics calculation."""
     
     # Create test DNs
@@ -127,7 +137,7 @@ def test_driver_stats_basic(db_session: Session):
     assert driver2_stats["record_count"] == 1
 
 
-def test_driver_stats_duplicate_status(db_session: Session):
+def test_driver_stats_duplicate_status(db_session: Session, client):
     """Test that duplicate status records for the same DN are counted only once."""
     
     # Create test DN
@@ -182,7 +192,7 @@ def test_driver_stats_duplicate_status(db_session: Session):
     assert driver3_stats["record_count"] == 2  # Only 2 unique (DN, status) pairs
 
 
-def test_driver_stats_filter_by_phone(db_session: Session):
+def test_driver_stats_filter_by_phone(db_session: Session, client):
     """Test filtering by specific phone number."""
     
     # Create test DNs
@@ -242,7 +252,7 @@ def test_driver_stats_filter_by_phone(db_session: Session):
     assert driver5_found is False
 
 
-def test_driver_stats_excludes_null_phone(db_session: Session):
+def test_driver_stats_excludes_null_phone(db_session: Session, client):
     """Test that records with null or empty phone numbers are excluded."""
     
     # Create test DN
