@@ -121,7 +121,6 @@ def update_dn(
         lat=lat_val,
         updated_by=updated_by_value,
         phone_number=phone_number_value,
-        status_site=status_site,
     )
 
     gspread_update_result: dict[str, Any] | None = None
