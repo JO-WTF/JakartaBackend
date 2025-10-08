@@ -103,9 +103,8 @@ def search_dn_list_api(
     du_id: str | None = Query(None, description="关联 DU ID"),
     phone_number: str | None = Query(None, description="Driver phone number"),
     status_delivery: Optional[List[str]] = Query(None, description="Status delivery"),
-    status_delivery_legacy: Optional[List[str]] = Query(
-        None, alias="statusDelivery", description="Status delivery (legacy alias)", include_in_schema=False
-    ),
+    status_site: Optional[List[str]] = Query(None, description="Status site"),
+    status_delivery_legacy: Optional[List[str]] = Query(None, alias="statusDelivery", description="Status delivery (legacy alias)", include_in_schema=False),
     status_values_param: Optional[List[str]] = Query(None, alias="status", description="Status"),
     status_not_empty: bool | None = Query(None, description="仅返回状态不为空的 DN 记录"),
     has_coordinate: bool | None = Query(None, description="根据是否存在经纬度筛选 DN 记录"),
@@ -164,6 +163,7 @@ def search_dn_list_api(
         du_id=du_id,
         phone_number=phone_number_value,
         status_delivery_values=status_delivery_values,
+        status_site_values=_collect_query_values(status_site),
         status_values=status_values,
         status_not_empty=status_not_empty,
         has_coordinate=has_coordinate,
@@ -193,6 +193,7 @@ def search_dn_list_api(
             "dn_number": it.dn_number,
             "created_at": to_gmt7_iso(it.created_at),
             "status": it.status,
+            "status_site": getattr(it, "status_site", None),
             "remark": it.remark,
             "photo_url": it.photo_url,
             "lng": it.lng,

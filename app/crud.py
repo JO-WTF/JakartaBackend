@@ -299,6 +299,7 @@ def search_dn_records(
     dn_number: Optional[str] = None,
     du_id: Optional[str] = None,
     status: Optional[str] = None,
+    status_site: Optional[str] = None,
     remark_keyword: Optional[str] = None,
     phone_number: Optional[str] = None,
     has_photo: Optional[bool] = None,
@@ -315,6 +316,8 @@ def search_dn_records(
         conds.append(DNRecord.du_id == du_id)
     if status:
         conds.append(DNRecord.status == status)
+    if status_site:
+        conds.append(DNRecord.status_site.ilike(f"%{status_site}%"))
     if remark_keyword:
         conds.append(DNRecord.remark.ilike(f"%{remark_keyword}%"))
     if isinstance(phone_number, str):
@@ -698,6 +701,7 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
         "subcon": DN.subcon,
         "status_wh": DN.status_wh,
         "status_delivery": DN.status_delivery,
+        "status_site": DN.status_site,
     }
 
     distinct_values: Dict[str, List[str]] = {}

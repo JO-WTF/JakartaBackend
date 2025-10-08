@@ -61,6 +61,7 @@ def update_dn(
     delivery_status: str | None = Form(None),
     status_delivery: str | None = Form(None, description="Backward compatibility alias for delivery_status form field"),
     remark: str | None = Form(None),
+    status_site: str | None = Form(None, description="站点状态，可选"),
     photo: UploadFile | None = File(None),
     lng: str | float | None = Form(None),
     lat: str | float | None = Form(None),
@@ -122,6 +123,8 @@ def update_dn(
         "lng": lng_val,
         "lat": lat_val,
     }
+    if status_site is not None:
+        ensure_payload["status_site"] = status_site
     if delivery_status_value is not None:
         ensure_payload["status_delivery"] = delivery_status_value
     if updated_by_value is not None:
@@ -150,6 +153,7 @@ def update_dn(
         lat=lat_val,
         updated_by=updated_by_value,
         phone_number=phone_number_value,
+        status_site=status_site,
     )
 
     gspread_update_result: dict[str, Any] | None = None
