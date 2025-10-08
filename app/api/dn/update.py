@@ -10,12 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.constants import (
     DN_RE,
-    VALID_STATUSES,
     ARRIVAL_STATUSES,
     DEPARTURE_STATUSES,
 )
-from app.core.sheet import sync_delivery_status_to_sheet, sync_status_timestamp_to_sheet
-from app.core.sync import _normalize_status_delivery_value
 from app.crud import (
     add_dn_record,
     delete_dn,
@@ -30,23 +27,9 @@ from app.models import DN
 from app.storage import save_file
 from app.utils.string import normalize_dn
 from app.utils.time import TZ_GMT7
+from app.utils.gspread import sync_dn_status_to_sheet  # Import the missing function
 
 router = APIRouter(prefix="/api/dn")
-
-
-def _derive_status_delivery_from_status(status: str) -> str | None:
-    """Return the inferred status_delivery value for a DN status."""
-
-    normalized = (status or "").strip().upper()
-    if normalized == "ARRIVED AT SITE":
-        return "On Site"
-    if normalized == "POD":
-        return "POD"
-    if normalized == "ARRIVED AT WH":
-        return None
-    if not normalized:
-        return None
-    return "On the way"
 
 
 def _current_timestamp_gmt7() -> str:
@@ -57,11 +40,9 @@ def _current_timestamp_gmt7() -> str:
 @router.post("/update")
 def update_dn(
     dnNumber: str = Form(...),
-    status: str = Form(...),
-    delivery_status: str | None = Form(None),
-    status_delivery: str | None = Form(None, description="Backward compatibility alias for delivery_status form field"),
-    remark: str | None = Form(None),
+    status_delivery: str | None = Form(None, description="配送状态，可选"),
     status_site: str | None = Form(None, description="站点状态，可选"),
+    remark: str | None = Form(None),
     photo: UploadFile | None = File(None),
     lng: str | float | None = Form(None),
     lat: str | float | None = Form(None),
@@ -72,8 +53,6 @@ def update_dn(
     dn_number = normalize_dn(dnNumber)
     if not DN_RE.fullmatch(dn_number):
         raise HTTPException(status_code=400, detail="Invalid DN number")
-    if status not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail="Invalid status")
 
     photo_url = None
     if photo and photo.filename:
@@ -87,20 +66,9 @@ def update_dn(
     if updated_by is not None:
         updated_by_value = updated_by.strip() or None
 
-    delivery_status_raw = delivery_status if delivery_status is not None else status_delivery
-    delivery_status_value = (delivery_status_raw or "").strip() or None
-
     phone_number_value = None
     if isinstance(phone_number, str):
         phone_number_value = phone_number.strip() or None
-
-    if delivery_status_value is None:
-        delivery_status_value = _derive_status_delivery_from_status(status)
-    else:
-        # 规范化用户输入
-        delivery_status_value = _normalize_status_delivery_value(delivery_status_value)
-        if delivery_status_value is None:
-            delivery_status_value = "No Status"
 
     existing_dn = db.query(DN).filter(DN.dn_number == dn_number).filter(_ACTIVE_DN_EXPR).one_or_none()
     gs_sheet_name = existing_dn.gs_sheet if existing_dn is not None else None
@@ -117,7 +85,6 @@ def update_dn(
         gs_row_index = None
 
     ensure_payload: dict[str, Any] = {
-        "status": status,
         "remark": remark,
         "photo_url": photo_url,
         "lng": lng_val,
@@ -125,14 +92,14 @@ def update_dn(
     }
     if status_site is not None:
         ensure_payload["status_site"] = status_site
-    if delivery_status_value is not None:
-        ensure_payload["status_delivery"] = delivery_status_value
+    if status_delivery is not None:
+        ensure_payload["status_delivery"] = status_delivery
     if updated_by_value is not None:
         ensure_payload["last_updated_by"] = updated_by_value
     if phone_number_value is not None:
         ensure_payload["driver_contact_number"] = phone_number_value
 
-    status_upper = (status or "").strip().upper()
+    status_upper = (status_delivery or "").strip().upper()
     timestamp_value: str | None = None
     if status_upper in ARRIVAL_STATUSES or status_upper in DEPARTURE_STATUSES:
         timestamp_value = _current_timestamp_gmt7()
@@ -146,7 +113,8 @@ def update_dn(
     rec = add_dn_record(
         db,
         dn_number=dn_number,
-        status=status,
+        status_delivery=status_delivery,
+        status_site=status_site,
         remark=remark,
         photo_url=photo_url,
         lng=lng_val,
@@ -159,16 +127,12 @@ def update_dn(
     gspread_update_result: dict[str, Any] | None = None
     gspread_timestamp_result: dict[str, Any] | None = None
     should_check_sheet = (
-        gs_sheet_name and isinstance(gs_row_index, int) and gs_row_index > 0 and delivery_status_value is not None
+        gs_sheet_name and isinstance(gs_row_index, int) and gs_row_index > 0 and status_delivery is not None
     )
 
     if should_check_sheet:
-        gspread_update_result = sync_delivery_status_to_sheet(
-            gs_sheet_name, gs_row_index, dn_number, delivery_status_value, updated_by_value
-        )
-        # Write timestamp to R or S column based on status
-        gspread_timestamp_result = sync_status_timestamp_to_sheet(
-            gs_sheet_name, gs_row_index, dn_number, status, updated_by_value
+        gspread_update_result = sync_dn_status_to_sheet(
+            gs_sheet_name, gs_row_index, dn_number, status_delivery, status_site, updated_by_value
         )
 
     response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}
@@ -282,9 +246,6 @@ def edit_dn_record(
         phone_number = phone_number.strip() or None
     elif phone_number_provided and phone_number is not None:
         phone_number = str(phone_number)
-
-    if status is not None and status not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail="Invalid status")
 
     photo_url = None
     if photo and getattr(photo, "filename", None):

@@ -34,8 +34,7 @@ __all__ = [
     "process_sheet_data",
     "process_all_sheets",
     "normalize_sheet_value",
-    "sync_delivery_status_to_sheet",
-    "sync_status_timestamp_to_sheet",
+    "sync_dn_status_to_sheet",
     "mark_plan_mos_rows_for_archiving",
     "ARCHIVE_TEXT_COLOR",
     "DEFAULT_ARCHIVE_THRESHOLD_DAYS",
@@ -135,325 +134,88 @@ def normalize_sheet_value(value: Any) -> Any:
     return value
 
 
-def sync_delivery_status_to_sheet(
+def sync_dn_status_to_sheet(
     sheet_name: str,
     row_index: int,
     dn_number: str,
-    new_value: str,
+    status_delivery: str | None = None,
+    status_site: str | None = None,
     updated_by: str | None = None,
-) -> dict[str, Any] | None:
-    """Write delivery status back to Google Sheet for a DN entry."""
-    # Normalize status_delivery values for Google Sheet format
-    if new_value == "On The Way":
-        new_value = "On the way"
-    
-    column_names = get_sheet_columns()
-
-    try:
-        status_column_position = column_names.index("status_delivery") + 1
-    except ValueError:
-        return {
-            "sheet": sheet_name,
-            "row": row_index,
-            "column_name": "status_delivery",
-            "error": "status_delivery column not found in sheet definition",
-            "new_value": new_value,
-        }
-
-    try:
-        dn_column_position = column_names.index("dn_number") + 1
-    except ValueError:
-        return {
-            "sheet": sheet_name,
-            "row": row_index,
-            "column_name": "dn_number",
-            "error": "dn_number column not found in sheet definition",
-            "new_value": new_value,
-        }
-
-    try:
-        gc = create_gspread_client()
-        sh = gc.open_by_url(SPREADSHEET_URL)
-        worksheet = sh.worksheet(sheet_name)
-        dn_cell_value = worksheet.cell(row_index, dn_column_position).value
-        normalized_sheet_dn = normalize_dn(dn_cell_value or "")
-
-        if normalized_sheet_dn != dn_number:
-            search_details: dict[str, Any] = {
-                "sheet": sheet_name,
-                "row": row_index,
-                "column": status_column_position,
-                "column_name": "status_delivery",
-                "current_dn_number": dn_cell_value,
-                "expected_dn_number": dn_number,
-                "error": "dn_number mismatch for target row",
-                "new_value": new_value,
-            }
-            try:
-                dn_column_values = worksheet.col_values(dn_column_position)
-            except Exception as search_exc:  # pragma: no cover - gspread errors
-                search_details["search_error"] = str(search_exc)
-                return search_details
-
-            found_matches: list[int] = []
-            for idx, value in enumerate(dn_column_values, start=1):
-                if normalize_dn(value or "") == dn_number:
-                    found_matches.append(idx)
-
-            found_row_index: int | None = found_matches[-1] if found_matches else None
-
-            if found_row_index is None:
-                search_details["search_result"] = "dn_number not found in sheet"
-                return search_details
-
-            search_details["search_matches"] = found_matches
-
-            try:
-                cell = worksheet.cell(found_row_index, status_column_position)
-            except Exception as fetch_exc:  # pragma: no cover - gspread errors
-                search_details["search_row"] = found_row_index
-                search_details["search_error"] = str(fetch_exc)
-                return search_details
-
-            update_details = {
-                "sheet": sheet_name,
-                "row": found_row_index,
-                "column": status_column_position,
-                "column_name": "status_delivery",
-                "current_value": cell.value,
-                "new_value": new_value,
-                "found_via_search": True,
-                "original_row_mismatch": row_index,
-            }
-            if found_matches:
-                update_details["search_matches"] = found_matches
-
-            normalized_current_value = (cell.value or "").strip()
-            if normalized_current_value == new_value:
-                update_details["skipped"] = True
-                update_details["normalized_current_value"] = normalized_current_value
-                return update_details
-
-            try:
-                worksheet.update_cell(found_row_index, status_column_position, new_value)
-                # Add note and hyperlink to the modified cell
-                try:
-                    cell_address = gspread.utils.rowcol_to_a1(found_row_index, status_column_position)
-                    # Add note
-                    note_text = f"Modified by Fast Tracker ({updated_by})" if updated_by else "Modified by Fast Tracker"
-                    worksheet.insert_note(cell_address, note_text)
-                    # Add hyperlink
-                    worksheet.format(cell_address, {
-                        "textFormat": {
-                            "link": {"uri": "https://idnsc.dpdns.org/admin"}
-                        }
-                    })
-                except Exception as note_exc:  # pragma: no cover - gspread errors
-                    update_details["note_error"] = str(note_exc)
-            except Exception as update_exc:  # pragma: no cover - gspread errors
-                update_details["update_error"] = str(update_exc)
-                return update_details
-
-            update_details["updated"] = True
-            return update_details
-
-        cell = worksheet.cell(row_index, status_column_position)
-    except Exception as exc:  # pragma: no cover - gspread errors
-        return {
-            "sheet": sheet_name,
-            "row": row_index,
-            "column": status_column_position,
-            "column_name": "status_delivery",
-            "error": str(exc),
-            "new_value": new_value,
-        }
-
-    update_details = {
-        "sheet": sheet_name,
-        "row": row_index,
-        "column": status_column_position,
-        "column_name": "status_delivery",
-        "current_value": cell.value,
-        "new_value": new_value,
-    }
-
-    normalized_current_value = (cell.value or "").strip()
-    if normalized_current_value == new_value:
-        update_details["skipped"] = True
-        update_details["normalized_current_value"] = normalized_current_value
-        return update_details
-
-    try:
-        worksheet.update_cell(row_index, status_column_position, new_value)
-        # Add note and hyperlink to the modified cell
-        try:
-            cell_address = gspread.utils.rowcol_to_a1(row_index, status_column_position)
-            # Add note
-            note_text = f"Modified by Fast Tracker ({updated_by})" if updated_by else "Modified by Fast Tracker"
-            worksheet.insert_note(cell_address, note_text)
-            # Add hyperlink
-            worksheet.format(cell_address, {
-                "textFormat": {
-                    "link": {"uri": "https://idnsc.dpdns.org/admin"}
-                }
-            })
-        except Exception as note_exc:  # pragma: no cover - gspread errors
-            update_details["note_error"] = str(note_exc)
-    except Exception as update_exc:  # pragma: no cover - gspread errors
-        update_details["update_error"] = str(update_exc)
-        return update_details
-
-    update_details["updated"] = True
-    return update_details
-
-
-def sync_status_timestamp_to_sheet(
-    sheet_name: str,
-    row_index: int,
-    dn_number: str,
-    status: str,
-    updated_by: str | None = None,
-) -> dict[str, Any] | None:
-    """Write timestamp to R or S column based on status.
-    
-    Status mapping rules:
-    - If status is 'ARRIVED AT XD/PM' or 'ARRIVED AT SITE': write to column S (actual_arrive_time_ata)
-    - If status is 'TRANSPORTING FROM WH' or 'TRANSPORTING FROM XD/PM': write to column R (actual_depart_from_start_point_atd)
-    - For other statuses: no timestamp is written
-    
-    Timestamp format: M/D/YYYY H:MM:SS in GMT+7 timezone.
-    """
+) -> dict[str, Any]:
+    """一次性写入 status_delivery、status_site、atd/ata 到 Google Sheet。"""
     from app.constants import ARRIVAL_STATUSES, DEPARTURE_STATUSES
-    
-    # Determine target column based on status
-    status_upper = status.strip().upper()
-    
-    # Check which column to update
-    if status_upper in ARRIVAL_STATUSES:
-        target_column_name = "actual_arrive_time_ata"  # Column S
-    elif status_upper in DEPARTURE_STATUSES:
-        target_column_name = "actual_depart_from_start_point_atd"  # Column R
-    else:
-        # Status doesn't require timestamp update
-        return None
-    
-    # Get current time in GMT+7 and format it
-    now_gmt7 = datetime.now(TZ_GMT7)
-    # Format: M/D/YYYY H:MM:SS (no leading zeros for month and day)
-    timestamp_str = f"{now_gmt7.month}/{now_gmt7.day}/{now_gmt7.year} {now_gmt7.hour}:{now_gmt7.minute:02d}:{now_gmt7.second:02d}"
-    
-    column_names = get_sheet_columns()
-    
-    found_matches: list[int] = []
 
-    try:
-        target_column_position = column_names.index(target_column_name) + 1
-    except ValueError:
-        return {
-            "sheet": sheet_name,
-            "row": row_index,
-            "column_name": target_column_name,
-            "error": f"{target_column_name} column not found in sheet definition",
-            "new_value": timestamp_str,
-            "status": status,
-        }
-    
-    try:
-        dn_column_position = column_names.index("dn_number") + 1
-    except ValueError:
-        return {
-            "sheet": sheet_name,
-            "row": row_index,
-            "column_name": "dn_number",
-            "error": "dn_number column not found in sheet definition",
-            "new_value": timestamp_str,
-            "status": status,
-        }
-    
+    column_names = get_sheet_columns()
+    result: dict[str, Any] = {}
     try:
         gc = create_gspread_client()
         sh = gc.open_by_url(SPREADSHEET_URL)
         worksheet = sh.worksheet(sheet_name)
+        dn_column_position = column_names.index("dn_number") + 1
+        status_delivery_column_position = column_names.index("status_delivery") + 1
+        status_site_column_position = None
+        if "status_site" in column_names:
+            status_site_column_position = column_names.index("status_site") + 1
+        atd_column_position = None
+        ata_column_position = None
+        if "actual_depart_from_start_point_atd" in column_names:
+            atd_column_position = column_names.index("actual_depart_from_start_point_atd") + 1
+        if "actual_arrive_time_ata" in column_names:
+            ata_column_position = column_names.index("actual_arrive_time_ata") + 1
+
+        # 校验 DN 行
         dn_cell_value = worksheet.cell(row_index, dn_column_position).value
         normalized_sheet_dn = normalize_dn(dn_cell_value or "")
-        
-        # Verify DN number matches
         if normalized_sheet_dn != dn_number:
-            # Try to find the correct row
-            search_details: dict[str, Any] = {
-                "sheet": sheet_name,
-                "row": row_index,
-                "column": target_column_position,
-                "column_name": target_column_name,
-                "current_dn_number": dn_cell_value,
-                "expected_dn_number": dn_number,
-                "error": "dn_number mismatch for target row",
-                "new_value": timestamp_str,
-                "status": status,
-            }
-            
-            try:
-                dn_column_values = worksheet.col_values(dn_column_position)
-            except Exception as search_exc:
-                search_details["search_error"] = str(search_exc)
-                return search_details
-            
-            for idx, value in enumerate(dn_column_values, start=1):
-                if normalize_dn(value or "") == dn_number:
-                    found_matches.append(idx)
-
-            found_row_index: int | None = found_matches[-1] if found_matches else None
-            
+            # 查找正确行
+            dn_column_values = worksheet.col_values(dn_column_position)
+            found_matches = [
+                idx for idx, value in enumerate(dn_column_values, start=1) if normalize_dn(value or "") == dn_number
+            ]
+            found_row_index = found_matches[-1] if found_matches else None
             if found_row_index is None:
-                search_details["search_result"] = "dn_number not found in sheet"
-                return search_details
-            
-            search_details["search_matches"] = found_matches
-
-            # Update with found row
+                result["error"] = "dn_number not found in sheet"
+                return result
             row_index = found_row_index
-        
-        # Write timestamp to target column
-        worksheet.update_cell(row_index, target_column_position, timestamp_str)
-        
-        # Add note and hyperlink to the modified cell
+            result["row_corrected"] = row_index
+
+        # 写 status_delivery
+        if status_delivery is not None:
+            worksheet.update_cell(row_index, status_delivery_column_position, status_delivery)
+            result["status_delivery_updated"] = True
+        # 写 status_site
+        if status_site_column_position is not None and status_site is not None:
+            worksheet.update_cell(row_index, status_site_column_position, status_site)
+            result["status_site_updated"] = True
+
+        # 写 atd/ata
+        status_upper = (status_delivery or "").strip().upper()
+        now_gmt7 = datetime.now(TZ_GMT7)
+        timestamp_str = f"{now_gmt7.month}/{now_gmt7.day}/{now_gmt7.year} {now_gmt7.hour}:{now_gmt7.minute:02d}:{now_gmt7.second:02d}"
+        if status_upper in ARRIVAL_STATUSES and ata_column_position is not None:
+            worksheet.update_cell(row_index, ata_column_position, timestamp_str)
+            result["actual_arrive_time_ata_updated"] = True
+        if status_upper in DEPARTURE_STATUSES and atd_column_position is not None:
+            worksheet.update_cell(row_index, atd_column_position, timestamp_str)
+            result["actual_depart_from_start_point_atd_updated"] = True
+
+        # 添加 note 和 hyperlink 到 status_delivery cell
         try:
-            cell_address = gspread.utils.rowcol_to_a1(row_index, target_column_position)
-            # Add note
+            cell_address = gspread.utils.rowcol_to_a1(row_index, status_delivery_column_position)
             note_text = f"Modified by Fast Tracker ({updated_by})" if updated_by else "Modified by Fast Tracker"
             worksheet.insert_note(cell_address, note_text)
-            # Add hyperlink
-            worksheet.format(cell_address, {
-                "textFormat": {
-                    "link": {"uri": "https://idnsc.dpdns.org/admin"}
-                }
-            })
-        except Exception:  # pragma: no cover - gspread errors
-            pass  # Don't fail the update if note/link fails
-        
-        result: dict[str, Any] = {
-            "sheet": sheet_name,
-            "row": row_index,
-            "column": target_column_position,
-            "column_name": target_column_name,
-            "new_value": timestamp_str,
-            "status": status,
-            "updated": True,
-        }
-        if found_matches:
-            result["search_matches"] = found_matches
+            worksheet.format(cell_address, {"textFormat": {"link": {"uri": "https://idnsc.dpdns.org/admin"}}})
+        except Exception as note_exc:
+            result["note_error"] = str(note_exc)
+
+        result["updated"] = True
+        result["row"] = row_index
+        result["sheet"] = sheet_name
+        result["dn_number"] = dn_number
         return result
-        
     except Exception as exc:
-        return {
-            "sheet": sheet_name,
-            "row": row_index,
-            "column": target_column_position,
-            "column_name": target_column_name,
-            "error": str(exc),
-            "new_value": timestamp_str,
-            "status": status,
-        }
+        result["error"] = str(exc)
+        return result
 
 
 def mark_plan_mos_rows_for_archiving(threshold_days: int | None = None) -> dict[str, Any]:
