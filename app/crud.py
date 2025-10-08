@@ -523,6 +523,7 @@ def search_dn_list(
     phone_number: str | None = None,
     status_values: Sequence[str] | None = None,
     status_delivery_values: Sequence[str] | None = None,
+    status_site_values: Sequence[str] | None = None,
     status_not_empty: bool | None = None,
     has_coordinate: bool | None = None,
     lsp_values: Sequence[str] | None = None,
@@ -569,6 +570,9 @@ def search_dn_list(
     ]
     if trimmed_plan_mos_dates:
         conds.append(func.trim(DN.plan_mos_date).in_(trimmed_plan_mos_dates))
+    trimmed_status_site_values = [value.strip() for value in (status_site_values or []) if isinstance(value, str) and value.strip()]
+    if trimmed_status_site_values:
+        conds.append(DN.status_site.in_(trimmed_status_site_values))
     if dn_numbers:
         conds.append(DN.dn_number.in_(dn_numbers))
     if du_id:
