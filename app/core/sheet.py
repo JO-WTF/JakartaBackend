@@ -189,13 +189,13 @@ def sync_dn_status_to_sheet(
             result["status_site_updated"] = True
 
         # 写 atd/ata
-        status_upper = (status_delivery or "").strip().upper()
+        status_delivery_upper = (status_delivery or "").strip().upper()
         now_gmt7 = datetime.now(TZ_GMT7)
         timestamp_str = f"{now_gmt7.month}/{now_gmt7.day}/{now_gmt7.year} {now_gmt7.hour}:{now_gmt7.minute:02d}:{now_gmt7.second:02d}"
-        if status_upper in ARRIVAL_STATUSES and ata_column_position is not None:
+        if status_delivery_upper in ARRIVAL_STATUSES and ata_column_position is not None:
             worksheet.update_cell(row_index, ata_column_position, timestamp_str)
             result["actual_arrive_time_ata_updated"] = True
-        if status_upper in DEPARTURE_STATUSES and atd_column_position is not None:
+        if status_delivery_upper in DEPARTURE_STATUSES and atd_column_position is not None:
             worksheet.update_cell(row_index, atd_column_position, timestamp_str)
             result["actual_depart_from_start_point_atd_updated"] = True
 
