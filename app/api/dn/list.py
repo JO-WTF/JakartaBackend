@@ -74,7 +74,8 @@ async def get_dn_list(db: Session = Depends(get_db)):
             "id": it.id,
             "dn_number": it.dn_number,
             "created_at": to_gmt7_iso(it.created_at),
-            "status": it.status,
+            "status_delivery": getattr(it, "status_delivery", None),
+            "status_site": getattr(it, "status_site", None),
             "remark": it.remark,
             "photo_url": it.photo_url,
             "lng": it.lng,
@@ -104,8 +105,8 @@ def search_dn_list_api(
     phone_number: str | None = Query(None, description="Driver phone number"),
     status_delivery: Optional[List[str]] = Query(None, description="Status delivery"),
     status_site: Optional[List[str]] = Query(None, description="Status site"),
-    status_values_param: Optional[List[str]] = Query(None, alias="status", description="Status"),
-    status_not_empty: bool | None = Query(None, description="仅返回状态不为空的 DN 记录"),
+    status_delivery_not_empty: bool | None = Query(None, description="仅返回交付状态不为空的 DN 记录"),
+    status_site_not_empty: bool | None = Query(None, description="仅返回现场状态不为空的 DN 记录"),
     has_coordinate: bool | None = Query(None, description="根据是否存在经纬度筛选 DN 记录"),
     show_deleted: bool = Query(False, description="是否显示已软删除的记录"),
     lsp: Optional[List[str]] = Query(None, description="LSP"),
@@ -145,7 +146,7 @@ def search_dn_list_api(
 
     plan_mos_dates = _collect_query_values(date)
     status_delivery_values = _collect_query_values(status_delivery)
-    status_values = _collect_query_values(status_values_param)
+    status_site_values = _collect_query_values(status_site)
     lsp_values = _collect_query_values(lsp)
     region_values = _collect_query_values(region)
     status_wh_values = _collect_query_values(status_wh)
@@ -162,9 +163,9 @@ def search_dn_list_api(
         du_id=du_id,
         phone_number=phone_number_value,
         status_delivery_values=status_delivery_values,
-        status_site_values=_collect_query_values(status_site),
-        status_values=status_values,
-        status_not_empty=status_not_empty,
+        status_site_values=status_site_values,
+        status_delivery_not_empty=status_delivery_not_empty,
+        status_site_not_empty=status_site_not_empty,
         has_coordinate=has_coordinate,
         show_deleted=show_deleted,
         lsp_values=lsp_values,
@@ -191,7 +192,7 @@ def search_dn_list_api(
             "id": it.id,
             "dn_number": it.dn_number,
             "created_at": to_gmt7_iso(it.created_at),
-            "status": it.status,
+            "status_delivery": getattr(it, "status_delivery", None),
             "status_site": getattr(it, "status_site", None),
             "remark": it.remark,
             "photo_url": it.photo_url,
@@ -224,7 +225,8 @@ def get_all_dn_records(db: Session = Depends(get_db)):
             {
                 "id": it.id,
                 "dn_number": it.dn_number,
-                "status": it.status,
+                "status_delivery": getattr(it, "status_delivery", None),
+                "status_site": getattr(it, "status_site", None),
                 "remark": it.remark,
                 "photo_url": it.photo_url,
                 "lng": it.lng,
@@ -260,7 +262,8 @@ def batch_search_dn_list(
             "id": it.id,
             "dn_number": it.dn_number,
             "created_at": to_gmt7_iso(it.created_at),
-            "status": it.status,
+            "status_delivery": getattr(it, "status_delivery", None),
+            "status_site": getattr(it, "status_site", None),
             "remark": it.remark,
             "photo_url": it.photo_url,
             "lng": it.lng,

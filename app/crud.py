@@ -744,11 +744,11 @@ def get_dn_status_delivery_lsp_counts(
     lsp: Optional[str] = None,
     plan_mos_date: Optional[str] = None,
 ) -> List[tuple[str, int, int]]:
-    """Return DN counts grouped by LSP with totals and non-empty status counts.
+    """Return DN counts grouped by LSP with totals and non-empty status_delivery counts.
 
     Note: Both total_count and status_not_empty_count include only DNs with
     status_delivery in ['On the way', 'On Site', 'POD'] (case-insensitive).
-    status_not_empty_count further filters for non-empty status field.
+    status_not_empty_count further filters for non-empty status_delivery field.
     """
 
     lsp_expr = func.coalesce(func.nullif(func.trim(DN.lsp), ""), "NO LSP")
@@ -763,14 +763,13 @@ def get_dn_status_delivery_lsp_counts(
     status_delivery_lower = func.lower(status_delivery_trimmed)
 
     # Build case expression to count only target statuses
-    count_case = case(*[(func.lower(status) == status_delivery_lower, 1) for status in target_statuses], else_=None)
+    count_case = case(*[(func.lower(status_delivery) == status_delivery_lower, 1) for status_delivery in target_statuses], else_=None)
 
-    # Build case expression to count only target statuses with non-empty status
-    status_trimmed = func.trim(DN.status)
+    # 只统计 status_delivery 非空
     status_not_empty_case = case(
         *[
-            ((func.lower(status) == status_delivery_lower) & (func.coalesce(status_trimmed, "") != ""), 1)
-            for status in target_statuses
+            ((func.lower(status_delivery) == status_delivery_lower) & (func.coalesce(func.trim(DN.status_delivery), "") != ""), 1)
+            for status_delivery in target_statuses
         ],
         else_=None,
     )
@@ -926,12 +925,12 @@ def get_driver_stats(
     Returns:
         List of tuples: (phone_number, unique_dn_count, record_count)
     """
-    # 使用子查询去重：对每个 (dn_number, phone_number, status) 组合只计算一次
+    # 使用子查询去重：对每个 (dn_number, phone_number, status_delivery) 组合只计算一次
     subquery = (
         db.query(
             DNRecord.phone_number,
             DNRecord.dn_number,
-            DNRecord.status,
+            DNRecord.status_delivery,
         )
         .filter(DNRecord.phone_number.isnot(None))
         .filter(DNRecord.phone_number != "")

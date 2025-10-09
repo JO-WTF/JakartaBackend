@@ -8,7 +8,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.constants import DN_RE, VALID_STATUS_DESCRIPTION
+from app.constants import DN_RE
 from app.crud import list_dn_records, list_dn_records_by_dn_numbers, search_dn_records
 from app.db import get_db
 from app.utils.query import normalize_batch_dn_numbers
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/dn")
 @router.get("/search")
 def search_dn_records_api(
     dn_number: Optional[str] = Query(None, description="精确 DN number"),
-    status: Optional[str] = Query(None, description=f"状态过滤，可选: {VALID_STATUS_DESCRIPTION}"),
+    status_delivery: Optional[str] = Query(None, description="交付状态过滤"),
     status_site: Optional[str] = Query(None, description="站点状态过滤(模糊)", alias="status_site"),
     remark: Optional[str] = Query(None, description="备注关键词(模糊)"),
     phone_number: Optional[str] = Query(None, description="司机联系电话"),
@@ -42,7 +42,7 @@ def search_dn_records_api(
     total, items = search_dn_records(
         db,
         dn_number=dn_number,
-        status=status,
+        status_delivery=status_delivery,
         status_site=status_site,
         remark_keyword=remark,
         phone_number=phone_number_value,
@@ -62,7 +62,7 @@ def search_dn_records_api(
             {
                 "id": it.id,
                 "dn_number": it.dn_number,
-                "status": it.status,
+                "status_delivery": getattr(it, "status_delivery", None),
                 "status_site": getattr(it, "status_site", None),
                 "remark": it.remark,
                 "photo_url": it.photo_url,
@@ -99,7 +99,8 @@ def batch_get_dn_records(
             {
                 "id": it.id,
                 "dn_number": it.dn_number,
-                "status": it.status,
+                "status_delivery": getattr(it, "status_delivery", None),
+                "status_site": getattr(it, "status_site", None),
                 "remark": it.remark,
                 "photo_url": it.photo_url,
                 "lng": it.lng,

@@ -144,7 +144,7 @@ def build_record_lookup(session: Session, dn_numbers: Iterable[str]) -> Dict[str
     if not dn_numbers:
         return {}
 
-    trimmed_status = func.upper(func.trim(DNRecord.status))
+    trimmed_status = func.upper(func.trim(DNRecord.status_delivery))
     arrival_case = case((trimmed_status.in_(tuple(ARRIVAL_RECORD_STATUSES)), 1), else_=0)
 
     rows = (

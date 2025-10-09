@@ -184,8 +184,8 @@ def batch_update_dn(
         if number in existing_numbers:
             add_failure(number, "DN number 已存在")
             continue
-        ensure_dn(db, number, status="NO STATUS")
-        add_dn_record(db, dn_number=number, status="NO STATUS", remark=None, photo_url=None, lng=None, lat=None)
+        ensure_dn(db, number, status_delivery="NO STATUS", status_site=None)
+        add_dn_record(db, dn_number=number, status_delivery="NO STATUS", status_site=None, remark=None, photo_url=None, lng=None, lat=None)
         success_numbers.append(number)
 
     status_value = "ok" if success_numbers else "fail"
@@ -201,7 +201,8 @@ def batch_update_dn(
 @router.put("/update/{id}")
 def edit_dn_record(
     id: int,
-    status: Optional[str] = Form(None),
+    status_delivery: Optional[str] = Form(None),
+    status_site: Optional[str] = Form(None),
     remark: Optional[str] = Form(None),
     updated_by: Optional[str] = Form(None),
     phone_number: Optional[str] = Form(None, alias="phoneNumber"),
@@ -213,8 +214,10 @@ def edit_dn_record(
     phone_number_provided = phone_number is not None
 
     if json_body and isinstance(json_body, dict):
-        if "status" in json_body:
-            status = json_body.get("status")
+        if "status_delivery" in json_body:
+            status_delivery = json_body.get("status_delivery")
+        if "status_site" in json_body:
+            status_site = json_body.get("status_site")
         if "remark" in json_body:
             remark = json_body.get("remark")
         if "updated_by" in json_body:
@@ -227,8 +230,10 @@ def edit_dn_record(
             phone_number = json_body.get("phoneNumber")
             phone_number_provided = True
 
-    if status is not None and status.strip() == "":
-        status = None
+    if status_delivery is not None and status_delivery.strip() == "":
+        status_delivery = None
+    if status_site is not None and status_site.strip() == "":
+        status_site = None
     if remark is not None:
         remark = remark.strip()
         if remark == "":
@@ -254,7 +259,8 @@ def edit_dn_record(
     rec = update_dn_record(
         db,
         rec_id=id,
-        status=status,
+        status_delivery=status_delivery,
+        status_site=status_site,
         remark=remark,
         photo_url=photo_url,
         updated_by=updated_by,
@@ -266,7 +272,8 @@ def edit_dn_record(
         raise HTTPException(status_code=404, detail="Record not found")
 
     ensure_payload: dict[str, Any] = {
-        "status": rec.status,
+        "status_delivery": rec.status_delivery,
+        "status_site": rec.status_site,
         "remark": rec.remark,
         "photo_url": rec.photo_url,
         "lng": rec.lng,
