@@ -47,11 +47,7 @@ def upsert_vehicle_signin(
 
     arrive_time = _normalize_timestamp(arrive_time) or datetime.now(timezone.utc)
 
-    vehicle = (
-        db.query(Vehicle)
-        .filter(func.upper(Vehicle.vehicle_plate) == plate)
-        .one_or_none()
-    )
+    vehicle = db.query(Vehicle).filter(func.upper(Vehicle.vehicle_plate) == plate).one_or_none()
 
     if vehicle is None:
         vehicle = Vehicle(vehicle_plate=plate, lsp=lsp)
@@ -75,11 +71,7 @@ def get_vehicle_by_plate(db: Session, vehicle_plate: str) -> Vehicle | None:
     if not plate:
         return None
 
-    return (
-        db.query(Vehicle)
-        .filter(func.upper(Vehicle.vehicle_plate) == plate)
-        .one_or_none()
-    )
+    return db.query(Vehicle).filter(func.upper(Vehicle.vehicle_plate) == plate).one_or_none()
 
 
 def mark_vehicle_departed(
@@ -137,10 +129,7 @@ def ensure_dn(db: Session, dn_number: str, **fields: Any) -> DN:
     assignable = filter_assignable_dn_fields(fields, allowed_columns=allowed_columns)
     # Exclude is_deleted from non_null_assignable to avoid conflicts
     # since we explicitly set it in the constructor
-    non_null_assignable = {
-        k: v for k, v in assignable.items()
-        if v is not None and k != 'is_deleted'
-    }
+    non_null_assignable = {k: v for k, v in assignable.items() if v is not None and k != "is_deleted"}
 
     dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
     if not dn:
@@ -181,9 +170,7 @@ def delete_dn(db: Session, dn_number: str) -> bool:
     if not dn:
         return False
 
-    db.query(DNRecord).filter(DNRecord.dn_number == dn_number).delete(
-        synchronize_session=False
-    )
+    db.query(DNRecord).filter(DNRecord.dn_number == dn_number).delete(synchronize_session=False)
     db.delete(dn)
     db.commit()
     return True
@@ -271,29 +258,16 @@ def create_dn_sync_log(
 
 
 def get_latest_dn_sync_log(db: Session) -> Optional[DNSyncLog]:
-    return (
-        db.query(DNSyncLog)
-        .order_by(DNSyncLog.created_at.desc(), DNSyncLog.id.desc())
-        .first()
-    )
+    return db.query(DNSyncLog).order_by(DNSyncLog.created_at.desc(), DNSyncLog.id.desc()).first()
 
 
 def list_dn_records(db: Session, dn_number: str, limit: int = 50) -> List[DNRecord]:
-    q = (
-        db.query(DNRecord)
-        .filter(DNRecord.dn_number == dn_number)
-        .order_by(DNRecord.created_at.desc())
-        .limit(limit)
-    )
+    q = db.query(DNRecord).filter(DNRecord.dn_number == dn_number).order_by(DNRecord.created_at.desc()).limit(limit)
     return q.all()
 
 
 def list_all_dn_records(db: Session) -> List[DNRecord]:
-    return (
-        db.query(DNRecord)
-        .order_by(DNRecord.created_at.desc(), DNRecord.id.desc())
-        .all()
-    )
+    return db.query(DNRecord).order_by(DNRecord.created_at.desc(), DNRecord.id.desc()).all()
 
 
 def search_dn_records(
@@ -448,24 +422,17 @@ def list_dn_by_dn_numbers(
 
     base_q = (
         db.query(DN)
-        .outerjoin(
-            latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
-        )
+        .outerjoin(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
         .filter(DN.dn_number.in_(numbers))
         .filter(_ACTIVE_DN_EXPR)
     )
 
     total = base_q.count()
 
-    latest_record_expr = func.coalesce(
-        latest_record_subq.c.latest_record_created_at, DN.created_at
-    )
+    latest_record_expr = func.coalesce(latest_record_subq.c.latest_record_created_at, DN.created_at)
 
     items = (
-        base_q.order_by(latest_record_expr.desc(), DN.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
+        base_q.order_by(latest_record_expr.desc(), DN.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     )
     return total, items
 
@@ -486,12 +453,7 @@ def get_dn_map_by_numbers(db: Session, dn_numbers: Iterable[str]) -> Dict[str, D
     if not numbers:
         return {}
 
-    rows = (
-        db.query(DN)
-        .filter(DN.dn_number.in_(numbers))
-        .order_by(DN.dn_number.asc())
-        .all()
-    )
+    rows = db.query(DN).filter(DN.dn_number.in_(numbers)).order_by(DN.dn_number.asc()).all()
 
     return {row.dn_number: row for row in rows}
 
@@ -550,30 +512,23 @@ def search_dn_list(
         .subquery()
     )
 
-    base_q = (
-        db.query(DN)
-        .outerjoin(
-            latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number
-        )
-    )
-    
+    base_q = db.query(DN).outerjoin(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
+
     # Apply deleted filter based on show_deleted parameter
     if not show_deleted:
         base_q = base_q.filter(_ACTIVE_DN_EXPR)
-    latest_record_expr = func.coalesce(
-        latest_record_subq.c.latest_record_created_at, DN.created_at
-    )
+    latest_record_expr = func.coalesce(latest_record_subq.c.latest_record_created_at, DN.created_at)
     last_modified_expr = func.greatest(DN.created_at, latest_record_expr)
     conds = []
 
     trimmed_plan_mos_dates = [
-        value.strip()
-        for value in (plan_mos_dates or [])
-        if isinstance(value, str) and value.strip()
+        value.strip() for value in (plan_mos_dates or []) if isinstance(value, str) and value.strip()
     ]
     if trimmed_plan_mos_dates:
         conds.append(func.trim(DN.plan_mos_date).in_(trimmed_plan_mos_dates))
-    trimmed_status_site_values = [value.strip() for value in (status_site_values or []) if isinstance(value, str) and value.strip()]
+    trimmed_status_site_values = [
+        value.strip() for value in (status_site_values or []) if isinstance(value, str) and value.strip()
+    ]
     if trimmed_status_site_values:
         conds.append(DN.status_site.in_(trimmed_status_site_values))
     if dn_numbers:
@@ -582,12 +537,16 @@ def search_dn_list(
         conds.append(DN.du_id == du_id)
     trimmed_phone_number = phone_number.strip() if isinstance(phone_number, str) else None
     if trimmed_phone_number:
-        phone_match_exists = exists().where(
-            and_(
-                DNRecord.dn_number == DN.dn_number,
-                func.trim(DNRecord.phone_number) == trimmed_phone_number,
+        phone_match_exists = (
+            exists()
+            .where(
+                and_(
+                    DNRecord.dn_number == DN.dn_number,
+                    func.trim(DNRecord.phone_number) == trimmed_phone_number,
+                )
             )
-        ).correlate(DN)
+            .correlate(DN)
+        )
         conds.append(
             or_(
                 func.trim(DN.driver_contact_number) == trimmed_phone_number,
@@ -595,21 +554,15 @@ def search_dn_list(
             )
         )
     normalized_status_values = [
-        value.strip().lower()
-        for value in (status_values or [])
-        if isinstance(value, str) and value.strip()
+        value.strip().lower() for value in (status_values or []) if isinstance(value, str) and value.strip()
     ]
     if normalized_status_values:
         conds.append(func.lower(func.trim(DN.status)).in_(normalized_status_values))
     normalized_status_delivery = [
-        value.strip().lower()
-        for value in (status_delivery_values or [])
-        if isinstance(value, str) and value.strip()
+        value.strip().lower() for value in (status_delivery_values or []) if isinstance(value, str) and value.strip()
     ]
     if normalized_status_delivery:
-        conds.append(
-            func.lower(func.trim(DN.status_delivery)).in_(normalized_status_delivery)
-        )
+        conds.append(func.lower(func.trim(DN.status_delivery)).in_(normalized_status_delivery))
     if status_not_empty is True:
         conds.append(
             and_(
@@ -642,33 +595,23 @@ def search_dn_list(
                 func.length(func.trim(DN.lng)) == 0,
             )
         )
-    trimmed_lsp_values = [
-        value.strip()
-        for value in (lsp_values or [])
-        if isinstance(value, str) and value.strip()
-    ]
+    trimmed_lsp_values = [value.strip() for value in (lsp_values or []) if isinstance(value, str) and value.strip()]
     if trimmed_lsp_values:
         conds.append(func.trim(DN.lsp).in_(trimmed_lsp_values))
     trimmed_region_values = [
-        value.strip()
-        for value in (region_values or [])
-        if isinstance(value, str) and value.strip()
+        value.strip() for value in (region_values or []) if isinstance(value, str) and value.strip()
     ]
     if trimmed_region_values:
         conds.append(func.trim(DN.region).in_(trimmed_region_values))
     if area:
         conds.append(DN.area == area)
     trimmed_status_wh_values = [
-        value.strip()
-        for value in (status_wh_values or [])
-        if isinstance(value, str) and value.strip()
+        value.strip() for value in (status_wh_values or []) if isinstance(value, str) and value.strip()
     ]
     if trimmed_status_wh_values:
         conds.append(func.trim(DN.status_wh).in_(trimmed_status_wh_values))
     trimmed_subcon_values = [
-        value.strip()
-        for value in (subcon_values or [])
-        if isinstance(value, str) and value.strip()
+        value.strip() for value in (subcon_values or []) if isinstance(value, str) and value.strip()
     ]
     if trimmed_subcon_values:
         conds.append(func.trim(DN.subcon).in_(trimmed_subcon_values))
@@ -689,12 +632,7 @@ def search_dn_list(
     if page_size is None:
         items = ordered_q.all()
     else:
-        items = (
-            ordered_q
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-            .all()
-        )
+        items = ordered_q.offset((page - 1) * page_size).limit(page_size).all()
     return total, items
 
 
@@ -768,16 +706,9 @@ def get_dn_status_delivery_counts(
 ) -> List[tuple[str, int]]:
     """Return DN counts grouped by status_delivery with optional filtering."""
 
-    status_expr = func.coalesce(
-        func.nullif(func.trim(DN.status_delivery), ""), "NO STATUS"
-    )
+    status_expr = func.coalesce(func.nullif(func.trim(DN.status_delivery), ""), "NO STATUS")
 
-    query = (
-        db.query(
-            status_expr.label("status_delivery"), func.count(DN.id).label("count")
-        )
-        .filter(_ACTIVE_DN_EXPR)
-    )
+    query = db.query(status_expr.label("status_delivery"), func.count(DN.id).label("count")).filter(_ACTIVE_DN_EXPR)
 
     trimmed_lsp = lsp.strip() if lsp else None
     if trimmed_lsp:
@@ -787,11 +718,7 @@ def get_dn_status_delivery_counts(
     if trimmed_plan_mos_date:
         query = query.filter(func.trim(DN.plan_mos_date) == trimmed_plan_mos_date)
 
-    rows = (
-        query.group_by(status_expr)
-        .order_by(status_expr.asc())
-        .all()
-    )
+    rows = query.group_by(status_expr).order_by(status_expr.asc()).all()
 
     return [(row.status_delivery, int(row.count)) for row in rows]
 
@@ -821,33 +748,23 @@ def get_dn_status_delivery_lsp_counts(
     status_delivery_lower = func.lower(status_delivery_trimmed)
 
     # Build case expression to count only target statuses
-    count_case = case(
-        *[(func.lower(status) == status_delivery_lower, 1) for status in target_statuses],
-        else_=None
-    )
+    count_case = case(*[(func.lower(status) == status_delivery_lower, 1) for status in target_statuses], else_=None)
 
     # Build case expression to count only target statuses with non-empty status
     status_trimmed = func.trim(DN.status)
     status_not_empty_case = case(
         *[
-            (
-                (func.lower(status) == status_delivery_lower) &
-                (func.coalesce(status_trimmed, "") != ""),
-                1
-            )
+            ((func.lower(status) == status_delivery_lower) & (func.coalesce(status_trimmed, "") != ""), 1)
             for status in target_statuses
         ],
-        else_=None
+        else_=None,
     )
 
-    query = (
-        db.query(
-            lsp_expr.label("lsp"),
-            func.count(count_case).label("total_count"),
-            func.count(status_not_empty_case).label("status_not_empty_count"),
-        )
-        .filter(_ACTIVE_DN_EXPR)
-    )
+    query = db.query(
+        lsp_expr.label("lsp"),
+        func.count(count_case).label("total_count"),
+        func.count(status_not_empty_case).label("status_not_empty_count"),
+    ).filter(_ACTIVE_DN_EXPR)
 
     if trimmed_plan_mos_date:
         query = query.filter(func.trim(DN.plan_mos_date) == trimmed_plan_mos_date)
@@ -855,11 +772,7 @@ def get_dn_status_delivery_lsp_counts(
     if trimmed_lsp:
         query = query.filter(func.trim(DN.lsp) == trimmed_lsp)
 
-    rows = (
-        query.group_by(lsp_expr)
-        .order_by(lsp_expr.asc())
-        .all()
-    )
+    rows = query.group_by(lsp_expr).order_by(lsp_expr.asc()).all()
 
     return [
         (
@@ -892,14 +805,11 @@ def get_dn_latest_update_snapshots(
         .subquery()
     )
 
-    query = (
-        db.query(
-            DN.lsp,
-            DN.plan_mos_date,
-            latest_record_subq.c.latest_record_created_at,
-        )
-        .join(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
-    )
+    query = db.query(
+        DN.lsp,
+        DN.plan_mos_date,
+        latest_record_subq.c.latest_record_created_at,
+    ).join(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
 
     if not include_deleted:
         query = query.filter(_ACTIVE_DN_EXPR)
@@ -948,12 +858,8 @@ def upsert_status_delivery_lsp_stats(
             existing = StatusDeliveryLspStat(**payload)
         else:
             existing.total_dn = payload.get("total_dn", existing.total_dn)
-            existing.status_not_empty = payload.get(
-                "status_not_empty", existing.status_not_empty
-            )
-            existing.plan_mos_date = payload.get(
-                "plan_mos_date", existing.plan_mos_date
-            )
+            existing.status_not_empty = payload.get("status_not_empty", existing.status_not_empty)
+            existing.plan_mos_date = payload.get("plan_mos_date", existing.plan_mos_date)
 
         db.add(existing)
         persisted.append(existing)
@@ -999,9 +905,9 @@ def get_driver_stats(
 ) -> List[Tuple[str, int, int]]:
     """
     统计各个 phone_number 下的唯一 DN 数量和记录数量。
-    
+
     注意：一个 DN 下面，status 重复的记录只计算一次。
-    
+
     Returns:
         List of tuples: (phone_number, unique_dn_count, record_count)
     """
@@ -1017,21 +923,21 @@ def get_driver_stats(
         .distinct()
         .subquery()
     )
-    
+
     # 统计每个 phone_number 的唯一 DN 数量和记录数量
     query = db.query(
         subquery.c.phone_number,
         func.count(func.distinct(subquery.c.dn_number)).label("unique_dn_count"),
         func.count().label("record_count"),
     ).group_by(subquery.c.phone_number)
-    
+
     # 如果指定了 phone_number，则过滤
     if phone_number:
         trimmed = phone_number.strip()
         if trimmed:
             query = query.filter(subquery.c.phone_number == trimmed)
-    
+
     # 按唯一 DN 数量降序排序
     query = query.order_by(func.count(func.distinct(subquery.c.dn_number)).desc())
-    
+
     return query.all()
