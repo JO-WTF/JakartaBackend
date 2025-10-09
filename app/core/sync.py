@@ -77,10 +77,10 @@ def _values_match(existing_value: Any, new_value: Any) -> bool:
 
 def _normalize_status_delivery_value(raw_value: str | None) -> str | None:
     """Normalize delivery status input to standard values.
-    
+
     Args:
         raw_value: The raw status delivery value to normalize
-        
+
     Returns:
         Normalized status delivery value or None if empty/invalid
         For non-string values, returns the value as-is
@@ -92,17 +92,17 @@ def _normalize_status_delivery_value(raw_value: str | None) -> str | None:
         return None
     if not isinstance(raw_value, str):
         return raw_value
-    
+
     # Trim and normalize whitespace
     trimmed = " ".join(raw_value.split())
     if not trimmed:
         return None
-    
+
     # Check if it's a standard value (case-insensitive)
     normalized = STATUS_DELIVERY_LOOKUP.get(trimmed.lower())
     if normalized:
         return normalized
-    
+
     # For non-standard values, return the normalized whitespace version
     return trimmed
 
@@ -163,7 +163,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         sheet_start = perf_counter()
         combined_df = process_all_sheets(sh)
         dn_sync_logger.debug("Fetched+combined sheet data in %.3fs", perf_counter() - sheet_start)
-        
+
         # Deduplicate by dn_number, keeping the last occurrence
         if not combined_df.empty and "dn_number" in combined_df.columns:
             original_rows = len(combined_df)
@@ -269,7 +269,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 record_build_start = perf_counter()
                 normalized_row[dn_index] = normalized_number
                 cleaned = dict(zip(columns_tuple, normalized_row))
-                
+
                 # Track duplicate DN numbers
                 dn_occurrence_count[normalized_number] = dn_occurrence_count.get(normalized_number, 0) + 1
                 if dn_occurrence_count[normalized_number] > 1:
@@ -278,7 +278,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                         normalized_number,
                         dn_occurrence_count[normalized_number]
                     )
-                
+
                 # Log plan_mos_date processing for debugging
                 if plan_mos_index is not None and original_plan_mos_date is not None:
                     current_plan_mos_date = cleaned.get("plan_mos_date")
@@ -288,12 +288,12 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                         original_plan_mos_date,
                         current_plan_mos_date
                     )
-                
+
                 records.append(cleaned)
                 record_build_total += perf_counter() - record_build_start
                 rows_persisted += 1
                 dn_numbers.add(normalized_number)
-                
+
         # Log duplicate DN statistics
         duplicate_dns = {dn: count for dn, count in dn_occurrence_count.items() if count > 1}
         if duplicate_dns:
@@ -342,7 +342,8 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
             merge_start = perf_counter()
             sheet_fields.update(
                 {
-                    "status": latest.status,
+                    "status_delivery": latest.status_delivery,
+                    "status_site": latest.status_site,
                     "remark": latest.remark,
                     "photo_url": latest.photo_url,
                     "lng": latest.lng,
@@ -528,8 +529,8 @@ def sync_dn_sheet_with_new_session() -> DnSyncResult:
         else:
             synced_numbers = result.synced_numbers
             message = (
-                "Synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)"
-                % (len(synced_numbers), result.created_count, result.updated_count, result.ignored_count)
+                    "Synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)"
+                    % (len(synced_numbers), result.created_count, result.updated_count, result.ignored_count)
             ) if synced_numbers else "Google Sheet returned no DN rows to sync"
             create_dn_sync_log(db, status="success", synced_numbers=synced_numbers, message=message)
             return result
