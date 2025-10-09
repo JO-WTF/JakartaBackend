@@ -67,14 +67,14 @@ async def _start_scheduler() -> None:
     if _scheduler is not None and _scheduler.running:
         return
     _scheduler = AsyncIOScheduler()
-    _scheduler.add_job(
-        scheduled_dn_sheet_sync,
-        trigger=IntervalTrigger(seconds=SHEET_SYNC_INTERVAL_SECONDS),
-        id=_SHEET_SYNC_JOB_ID,
-        max_instances=1,
-        coalesce=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=5),
-    )
+    # _scheduler.add_job(
+    #     scheduled_dn_sheet_sync,
+    #     trigger=IntervalTrigger(seconds=SHEET_SYNC_INTERVAL_SECONDS),
+    #     id=_SHEET_SYNC_JOB_ID,
+    #     max_instances=1,
+    #     coalesce=True,
+    #     next_run_time=datetime.utcnow() + timedelta(seconds=5),
+    # )
     _scheduler.add_job(
         scheduled_status_delivery_lsp_summary_capture,
         trigger=CronTrigger(minute=0),
