@@ -275,7 +275,7 @@ def search_dn_records(
     *,
     dn_number: Optional[str] = None,
     du_id: Optional[str] = None,
-    status: Optional[str] = None,
+    status_delivery: Optional[str] = None,
     status_site: Optional[str] = None,
     remark_keyword: Optional[str] = None,
     phone_number: Optional[str] = None,
@@ -291,8 +291,8 @@ def search_dn_records(
         conds.append(DNRecord.dn_number == dn_number)
     if du_id:
         conds.append(DNRecord.du_id == du_id)
-    if status:
-        conds.append(DNRecord.status == status)
+    if status_delivery:
+        conds.append(DNRecord.status_delivery == status_delivery)
     if status_site:
         conds.append(DNRecord.status_site.ilike(f"%{status_site}%"))
     if remark_keyword:
@@ -329,7 +329,8 @@ def update_dn_record(
     db: Session,
     rec_id: int,
     *,
-    status: Optional[str] = None,
+    status_delivery: Optional[str] = None,
+    status_site: Optional[str] = None,
     remark: Optional[str] = None,
     photo_url: Optional[str] = None,
     du_id: Optional[str] = None,
@@ -343,8 +344,10 @@ def update_dn_record(
     if not obj:
         return None
 
-    if status is not None:
-        obj.status = status
+    if status_delivery is not None:
+        obj.status_delivery = status_delivery
+    if status_site is not None:
+        obj.status_site = status_site
     if remark is not None:
         obj.remark = remark
     if photo_url is not None:
@@ -486,10 +489,11 @@ def search_dn_list(
     dn_numbers: Sequence[str] | None = None,
     du_id: str | None = None,
     phone_number: str | None = None,
-    status_values: Sequence[str] | None = None,
     status_delivery_values: Sequence[str] | None = None,
     status_site_values: Sequence[str] | None = None,
-    status_not_empty: bool | None = None,
+    status_delivery_not_empty: bool | None = None,
+    status_site_not_empty: bool | None = None,
+    # status_not_empty 已废弃
     has_coordinate: bool | None = None,
     lsp_values: Sequence[str] | None = None,
     region_values: Sequence[str] | None = None,
@@ -553,28 +557,39 @@ def search_dn_list(
                 phone_match_exists,
             )
         )
-    normalized_status_values = [
-        value.strip().lower() for value in (status_values or []) if isinstance(value, str) and value.strip()
-    ]
-    if normalized_status_values:
-        conds.append(func.lower(func.trim(DN.status)).in_(normalized_status_values))
     normalized_status_delivery = [
         value.strip().lower() for value in (status_delivery_values or []) if isinstance(value, str) and value.strip()
     ]
     if normalized_status_delivery:
         conds.append(func.lower(func.trim(DN.status_delivery)).in_(normalized_status_delivery))
-    if status_not_empty is True:
+
+    if status_delivery_not_empty is True:
         conds.append(
             and_(
-                DN.status.isnot(None),
-                func.length(func.trim(DN.status)) > 0,
+                DN.status_delivery.isnot(None),
+                func.length(func.trim(DN.status_delivery)) > 0,
             )
         )
-    elif status_not_empty is False:
+    elif status_delivery_not_empty is False:
         conds.append(
             or_(
-                DN.status.is_(None),
-                func.length(func.trim(DN.status)) == 0,
+                DN.status_delivery.is_(None),
+                func.length(func.trim(DN.status_delivery)) == 0,
+            )
+        )
+
+    if status_site_not_empty is True:
+        conds.append(
+            and_(
+                DN.status_site.isnot(None),
+                func.length(func.trim(DN.status_site)) > 0,
+            )
+        )
+    elif status_site_not_empty is False:
+        conds.append(
+            or_(
+                DN.status_site.is_(None),
+                func.length(func.trim(DN.status_site)) == 0,
             )
         )
     if has_coordinate is True:
