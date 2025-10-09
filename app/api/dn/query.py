@@ -126,7 +126,8 @@ def get_dn_records(dn_number: str, db: Session = Depends(get_db)):
             {
                 "id": it.id,
                 "dn_number": it.dn_number,
-                "status": it.status,
+                "status_delivery": it.status_delivery,
+                "status_site": it.status_site,
                 "remark": it.remark,
                 "photo_url": it.photo_url,
                 "lng": it.lng,
