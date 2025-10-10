@@ -205,13 +205,15 @@ def add_dn_record(
 
     # Keep the DN table in sync with the latest record that was just created.
     ensure_payload: dict[str, Any] = {
-        "status_delivery": status_delivery,
-        "status_site": status_site,
         "remark": remark,
         "photo_url": photo_url,
         "lng": lng,
         "lat": lat,
     }
+    if status_delivery is not None:
+        ensure_payload["status_delivery"] = status_delivery
+    if status_site is not None:
+        ensure_payload["status_site"] = status_site
     if updated_by is not None:
         ensure_payload["last_updated_by"] = updated_by
     if phone_number is not None:
