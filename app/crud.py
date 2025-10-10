@@ -185,13 +185,11 @@ def add_dn_record(
     photo_url: str | None = None,
     lng: str | None = None,
     lat: str | None = None,
-    du_id: str | None = None,
     updated_by: str | None = None,
     phone_number: str | None = None,
 ) -> DNRecord:
     rec = DNRecord(
         dn_number=dn_number,
-        du_id=du_id,
         remark=remark,
         photo_url=photo_url,
         lng=lng,
@@ -207,7 +205,6 @@ def add_dn_record(
 
     # Keep the DN table in sync with the latest record that was just created.
     ensure_payload: dict[str, Any] = {
-        "du_id": du_id,
         "status_delivery": status_delivery,
         "status_site": status_site,
         "remark": remark,
@@ -333,8 +330,6 @@ def update_dn_record(
     status_site: Optional[str] = None,
     remark: Optional[str] = None,
     photo_url: Optional[str] = None,
-    du_id: Optional[str] = None,
-    du_id_set: bool = False,
     updated_by: Optional[str] = None,
     updated_by_set: bool = False,
     phone_number: Optional[str] = None,
@@ -352,10 +347,6 @@ def update_dn_record(
         obj.remark = remark
     if photo_url is not None:
         obj.photo_url = photo_url
-    if du_id_set:
-        obj.du_id = du_id
-    elif du_id is not None:
-        obj.du_id = du_id
     if updated_by_set:
         obj.updated_by = updated_by
     elif updated_by is not None:

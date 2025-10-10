@@ -71,7 +71,6 @@ class DNRecord(Base):
     __tablename__ = "dn_record"
     id = Column(Integer, primary_key=True, index=True)
     dn_number = Column(String(64), index=True, nullable=False)
-    du_id = Column(String(32), nullable=True)
     status_delivery = Column(Text, nullable=True)
     status_site = Column(Text, nullable=True)
     remark = Column(Text, nullable=True)
