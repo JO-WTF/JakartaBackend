@@ -19,7 +19,6 @@ from app.crud import (
     delete_dn_record,
     ensure_dn,
     get_existing_dn_numbers,
-    update_dn_record,
     _ACTIVE_DN_EXPR,
 )
 from app.db import get_db
@@ -90,9 +89,9 @@ def update_dn(
         "lng": lng_val,
         "lat": lat_val,
     }
-    if status_site is not None:
+    if status_site:
         ensure_payload["status_site"] = status_site
-    if status_delivery is not None:
+    if status_delivery:
         ensure_payload["status_delivery"] = status_delivery
     if updated_by_value is not None:
         ensure_payload["last_updated_by"] = updated_by_value
@@ -196,96 +195,6 @@ def batch_update_dn(
         "success_dn_numbers": success_numbers,
         "failure_details": failure_details,
     }
-
-
-@router.put("/update/{id}")
-def edit_dn_record(
-    id: int,
-    status_delivery: Optional[str] = Form(None),
-    status_site: Optional[str] = Form(None),
-    remark: Optional[str] = Form(None),
-    updated_by: Optional[str] = Form(None),
-    phone_number: Optional[str] = Form(None, alias="phoneNumber"),
-    photo: UploadFile | None = File(None),
-    json_body: Optional[dict] = Body(None),
-    db: Session = Depends(get_db),
-):
-    updated_by_provided = updated_by is not None
-    phone_number_provided = phone_number is not None
-
-    if json_body and isinstance(json_body, dict):
-        if "status_delivery" in json_body:
-            status_delivery = json_body.get("status_delivery")
-        if "status_site" in json_body:
-            status_site = json_body.get("status_site")
-        if "remark" in json_body:
-            remark = json_body.get("remark")
-        if "updated_by" in json_body:
-            updated_by = json_body.get("updated_by")
-            updated_by_provided = True
-        if "phone_number" in json_body:
-            phone_number = json_body.get("phone_number")
-            phone_number_provided = True
-        elif "phoneNumber" in json_body:
-            phone_number = json_body.get("phoneNumber")
-            phone_number_provided = True
-
-    if status_delivery is not None and status_delivery.strip() == "":
-        status_delivery = None
-    if status_site is not None and status_site.strip() == "":
-        status_site = None
-    if remark is not None:
-        remark = remark.strip()
-        if remark == "":
-            remark = None
-        elif len(remark) > 1000:
-            raise HTTPException(status_code=400, detail="remark too long (max 1000 chars)")
-
-    if isinstance(updated_by, str):
-        updated_by = updated_by.strip() or None
-    elif updated_by_provided and updated_by is not None:
-        updated_by = str(updated_by)
-
-    if isinstance(phone_number, str):
-        phone_number = phone_number.strip() or None
-    elif phone_number_provided and phone_number is not None:
-        phone_number = str(phone_number)
-
-    photo_url = None
-    if photo and getattr(photo, "filename", None):
-        content = photo.file.read()
-        photo_url = save_file(content, photo.content_type or "application/octet-stream")
-
-    rec = update_dn_record(
-        db,
-        rec_id=id,
-        status_delivery=status_delivery,
-        status_site=status_site,
-        remark=remark,
-        photo_url=photo_url,
-        updated_by=updated_by,
-        updated_by_set=updated_by_provided,
-        phone_number=phone_number,
-        phone_number_set=phone_number_provided,
-    )
-    if not rec:
-        raise HTTPException(status_code=404, detail="Record not found")
-
-    ensure_payload: dict[str, Any] = {
-        "status_delivery": rec.status_delivery,
-        "status_site": rec.status_site,
-        "remark": rec.remark,
-        "photo_url": rec.photo_url,
-        "lng": rec.lng,
-        "lat": rec.lat,
-    }
-    if updated_by_provided:
-        ensure_payload["last_updated_by"] = rec.updated_by
-    if phone_number_provided:
-        ensure_payload["driver_contact_number"] = rec.phone_number
-
-    ensure_dn(db, rec.dn_number, **ensure_payload)
-    return {"ok": True, "id": rec.id}
 
 
 @router.delete("/update/{id}")
