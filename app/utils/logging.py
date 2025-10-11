@@ -29,6 +29,17 @@ class _DnSyncLogFilter(logging.Filter):
 def _configure_dn_sync_logger(base_logger: logging.Logger) -> logging.LoggerAdapter:
     global _dn_sync_file_handler
 
+    if base_logger.getEffectiveLevel() > logging.INFO:
+        base_logger.setLevel(logging.INFO)
+
+    if not any(getattr(handler, "dn_sync_console", False) for handler in base_logger.handlers):
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        console_handler.addFilter(_DnSyncLogFilter())
+        console_handler.dn_sync_console = True  # type: ignore[attr-defined]
+        base_logger.addHandler(console_handler)
+
     if _dn_sync_file_handler is None or getattr(_dn_sync_file_handler, "baseFilename", None) != str(DN_SYNC_LOG_PATH):
         handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))

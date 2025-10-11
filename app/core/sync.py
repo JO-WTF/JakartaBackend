@@ -282,7 +282,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 # Log plan_mos_date processing for debugging
                 if plan_mos_index is not None and original_plan_mos_date is not None:
                     current_plan_mos_date = cleaned.get("plan_mos_date")
-                    logger.info(
+                    logger.debug(
                         "DN %s plan_mos_date processing: original='%s' -> normalized='%s'",
                         normalized_number,
                         original_plan_mos_date,
