@@ -26,7 +26,7 @@ from app.models import DN
 from app.storage import save_file
 from app.utils.string import normalize_dn
 from app.utils.time import TZ_GMT7
-from app.core.sheet import sync_dn_status_to_sheet
+from app.core.sheet import sync_dn_record_to_sheet
 
 router = APIRouter(prefix="/api/dn")
 
@@ -129,8 +129,8 @@ def update_dn(
     )
 
     if should_check_sheet:
-        gspread_update_result = sync_dn_status_to_sheet(
-            gs_sheet_name, gs_row_index, dn_number, status_delivery, status_site, updated_by_value
+        gspread_update_result = sync_dn_record_to_sheet(
+            gs_sheet_name, gs_row_index, dn_number, status_delivery, status_site, remark, updated_by_value
         )
 
     response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}

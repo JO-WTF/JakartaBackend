@@ -34,7 +34,7 @@ __all__ = [
     "process_sheet_data",
     "process_all_sheets",
     "normalize_sheet_value",
-    "sync_dn_status_to_sheet",
+    "sync_dn_record_to_sheet",
     "mark_plan_mos_rows_for_archiving",
     "ARCHIVE_TEXT_COLOR",
     "DEFAULT_ARCHIVE_THRESHOLD_DAYS",
@@ -134,15 +134,16 @@ def normalize_sheet_value(value: Any) -> Any:
     return value
 
 
-def sync_dn_status_to_sheet(
+def sync_dn_record_to_sheet(
     sheet_name: str,
     row_index: int,
     dn_number: str,
     status_delivery: str | None = None,
     status_site: str | None = None,
+    remark: str | None = None,
     updated_by: str | None = None,
 ) -> dict[str, Any]:
-    """一次性写入 status_delivery、status_site、atd/ata 到 Google Sheet。"""
+    """一次性写入 status_delivery、status_site、remark、atd/ata 到 Google Sheet。"""
     from app.constants import ARRIVAL_STATUSES, DEPARTURE_STATUSES
 
     column_names = get_sheet_columns()
@@ -156,6 +157,9 @@ def sync_dn_status_to_sheet(
         status_site_column_position = None
         if "status_site" in column_names:
             status_site_column_position = column_names.index("status_site") + 1
+        issue_remark_column_position = None
+        if "issue_remark" in column_names:
+            issue_remark_column_position = column_names.index("issue_remark") + 1
         atd_column_position = None
         ata_column_position = None
         if "actual_depart_from_start_point_atd" in column_names:
@@ -187,6 +191,10 @@ def sync_dn_status_to_sheet(
         if status_site_column_position is not None and status_site is not None:
             worksheet.update_cell(row_index, status_site_column_position, status_site)
             result["status_site_updated"] = True
+        # 写 issue_remark
+        if issue_remark_column_position is not None and remark is not None:
+            worksheet.update_cell(row_index, issue_remark_column_position, remark)
+            result["issue_remark_updated"] = True
 
         # 写 atd/ata
         status_delivery_upper = (status_delivery or "").strip().upper()
