@@ -12,6 +12,7 @@ from .dn_columns import (
     ensure_dynamic_columns_loaded,
     get_mutable_dn_columns,
 )
+from app.utils.logging import logger
 
 
 _ACTIVE_DN_EXPR = func.coalesce(DN.is_deleted, "N") == "N"
@@ -737,40 +738,29 @@ def get_dn_status_delivery_lsp_counts(
     lsp: Optional[str] = None,
     plan_mos_date: Optional[str] = None,
 ) -> List[tuple[str, int, int]]:
-    """Return DN counts grouped by LSP with totals and non-empty status_delivery counts.
+    """Return DN counts grouped by LSP for PIC confirmed records.
 
-    Note: Both total_count and status_not_empty_count include only DNs with
-    status_delivery in ['On the way', 'On Site', 'POD'] (case-insensitive).
-    status_not_empty_count further filters for non-empty status_delivery field.
+    total_count counts DN rows where status_site equals ``PIC confirmed`` (case-insensitive).
+    status_not_empty_count applies the same filter and requires status_delivery to be non-empty.
     """
 
     lsp_expr = func.coalesce(func.nullif(func.trim(DN.lsp), ""), "NO LSP")
     trimmed_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
     trimmed_lsp = lsp.strip() if lsp else None
 
-    # Define the target status_delivery values (case-insensitive match)
-    target_statuses = ["On the way", "On Site", "POD"]
-
-    # Create case expression for counting only specific status_delivery values
+    normalized_target_site = "pic confirmed"
+    status_site_normalized = func.lower(func.trim(DN.status_site))
+    status_site_matches = status_site_normalized == normalized_target_site
     status_delivery_trimmed = func.trim(DN.status_delivery)
-    status_delivery_lower = func.lower(status_delivery_trimmed)
+    status_delivery_present = func.coalesce(status_delivery_trimmed, "") != ""
 
-    # Build case expression to count only target statuses
-    count_case = case(*[(func.lower(status_delivery) == status_delivery_lower, 1) for status_delivery in target_statuses], else_=None)
-
-    # 只统计 status_delivery 非空
-    status_not_empty_case = case(
-        *[
-            ((func.lower(status_delivery) == status_delivery_lower) & (func.coalesce(func.trim(DN.status_delivery), "") != ""), 1)
-            for status_delivery in target_statuses
-        ],
-        else_=None,
-    )
+    total_case = case((status_site_matches, 1), else_=0)
+    status_not_empty_case = case((and_(status_site_matches, status_delivery_present), 1), else_=0)
 
     query = db.query(
         lsp_expr.label("lsp"),
-        func.count(count_case).label("total_count"),
-        func.count(status_not_empty_case).label("status_not_empty_count"),
+        func.sum(total_case).label("total_count"),
+        func.sum(status_not_empty_case).label("status_not_empty_count"),
     ).filter(_ACTIVE_DN_EXPR)
 
     if trimmed_plan_mos_date:

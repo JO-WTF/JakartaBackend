@@ -31,6 +31,7 @@ from app.schemas.dn import (
 )
 from app.constants import STANDARD_STATUS_DELIVERY_VALUES
 from app.utils.time import TZ_GMT7
+from app.utils.logging import logger
 
 router = APIRouter(prefix="/api/dn")
 
@@ -227,6 +228,7 @@ def get_dn_status_delivery_stats(
     lsp_stats = get_dn_status_delivery_lsp_counts(
         db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
     )
+    logger.info(lsp_stats)
     lsp_summary = [
         StatusDeliveryLspSummary(
             lsp=lsp_value,
