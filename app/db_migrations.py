@@ -129,17 +129,72 @@ def ensure_table_schema(db: Session, table_name: str, model_table: Table) -> Non
         raise
 
 
+def prepare_dn_table_migration(db: Session) -> None:
+    """
+    Prepare DN table for migration by handling old schema.
+
+    Only execute if both status and status_delivery columns exist:
+    1. Drop status_delivery column
+    2. Rename status column to status_delivery and make it nullable
+    """
+    logger.info("Preparing DN table for migration")
+
+    try:
+        inspector = inspect(db.bind)
+
+        # Check if dn table exists
+        if not inspector.has_table("dn"):
+            logger.info("DN table does not exist yet, skipping preparation")
+            return
+
+        # Get existing columns
+        existing_columns = {col['name'].lower(): col for col in inspector.get_columns("dn")}
+
+        # Only proceed if both status and status_delivery exist
+        has_status = 'status' in existing_columns
+        has_status_delivery = 'status_delivery' in existing_columns
+
+        if not (has_status):
+            logger.info(
+                "Skipping DN table preparation)"
+            )
+            return
+
+        logger.info("Both status and status_delivery columns exist, proceeding with migration")
+
+        # Step 1: Drop status_delivery
+        if has_status_delivery:
+            logger.info("Dropping existing status_delivery column from DN table")
+            db.execute(text('ALTER TABLE "dn" DROP COLUMN "status_delivery"'))
+            db.commit()
+            logger.info("Successfully dropped status_delivery column")
+
+        # Step 2: Rename status to status_delivery and make it nullable
+        logger.info("Renaming status column to status_delivery in DN table")
+        db.execute(text('ALTER TABLE "dn" RENAME COLUMN "status" TO "status_delivery"'))
+        db.execute(text('ALTER TABLE "dn" ALTER COLUMN "status_delivery" DROP NOT NULL'))
+        db.commit()
+        logger.info("Successfully renamed status to status_delivery and made it nullable")
+
+        logger.info("Completed DN table preparation")
+
+    except Exception as e:
+        logger.error("DN table preparation failed: %s", e)
+        db.rollback()
+        raise
+
+
 def run_startup_migrations(db: Session) -> None:
     """Run all necessary startup migrations to sync database schema with models."""
     logger.info("Running startup database migrations")
-    
+
     try:
         # Get all tables from the Base metadata
         for table_name, table in Base.metadata.tables.items():
             ensure_table_schema(db, table_name, table)
-        
+
         logger.info("Completed startup database migrations")
-        
+
     except Exception as e:
         logger.error("Startup migrations failed: %s", e)
         raise
