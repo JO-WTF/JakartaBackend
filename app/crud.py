@@ -746,9 +746,9 @@ def get_dn_status_delivery_lsp_counts(
     trimmed_plan_mos_date = plan_mos_date.strip() if plan_mos_date else None
     trimmed_lsp = lsp.strip() if lsp else None
 
-    normalized_target_site = "pic confirmed"
-    status_site_normalized = func.lower(func.trim(DN.status_site))
-    status_site_matches = status_site_normalized == normalized_target_site
+    # Treat NULL/empty status_site as empty string, then compare lowercase
+    status_site_normalized = func.lower(func.coalesce(func.trim(DN.status_site), ""))
+    status_site_matches = status_site_normalized != "pic not confirmed"
     status_delivery_trimmed = func.trim(DN.status_delivery)
     status_delivery_present = func.coalesce(status_delivery_trimmed, "") != ""
 
