@@ -231,7 +231,7 @@ def search_dn_list_api(
         entry["total_dn"] += 1
         # status_not_empty means status_delivery not empty/null
         sd_present = getattr(dn, "status_delivery", None)
-        if sd_present is not None and str(sd_present).strip():
+        if sd_present is not None and str(sd_present).strip() and str(sd_present).lower() != "no status":
             entry["status_not_empty"] += 1
 
     lsp_summary = [
