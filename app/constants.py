@@ -32,6 +32,7 @@ VALID_STATUSES: tuple[str, ...] = (
     "NO STATUS",
     "NEW MOS",
     "ARRIVED AT WH",
+    "DEPARTED FROM WH",
     "TRANSPORTING FROM WH",
     "ARRIVED AT XD/PM",
     "TRANSPORTING FROM XD/PM",
