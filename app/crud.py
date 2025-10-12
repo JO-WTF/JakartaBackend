@@ -648,6 +648,7 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
 
     columns: Dict[str, Any] = {
         "lsp": DN.lsp,
+        "area": DN.area,
         "region": DN.region,
         "plan_mos_date": DN.plan_mos_date,
         "subcon": DN.subcon,

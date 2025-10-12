@@ -201,8 +201,6 @@ def get_dn_stats(date: str, db: Session = Depends(get_db)):
 def get_dn_filter_options(db: Session = Depends(get_db)):
     values, total = get_dn_unique_field_values(db)
     data: dict[str, Any] = {**values, "total": total}
-    if "status_delivery" in data:
-        data.setdefault("status_deliver", data["status_delivery"])  # 兼容字段
     return {"ok": True, "data": data}
 
 

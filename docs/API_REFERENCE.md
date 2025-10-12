@@ -697,13 +697,10 @@ Status: 404
     "region": ["Jakarta", "Bandung", "Surabaya"],
     "status": ["ON THE WAY", "ON SITE", "POD"],
     "status_delivery": ["On the way", "On Site", "POD"],
-    "status_deliver": ["On the way", "On Site", "POD"],
     "total": 150
   }
 }
 ```
-
-**说明**: `status_deliver` 字段为向后兼容保留
 
 ---
 
