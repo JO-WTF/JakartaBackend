@@ -206,45 +206,6 @@ def get_dn_filter_options(db: Session = Depends(get_db)):
     return {"ok": True, "data": data}
 
 
-@router.get("/status-delivery/stats", response_model=StatusDeliveryStatsResponse)
-def get_dn_status_delivery_stats(
-    lsp: Optional[str] = Query(default=None),
-    plan_mos_date: Optional[str] = Query(default=None),
-    db: Session = Depends(get_db),
-):
-    normalized_lsp = lsp.strip() if lsp else None
-    normalized_plan_mos_date = (plan_mos_date.strip() if plan_mos_date else None) or datetime.now().strftime("%d %b %y")
-
-    stats = get_dn_status_delivery_counts(
-        db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
-    )
-    total = sum(count for _, count in stats)
-
-    data = [
-        StatusDeliveryCount(status_delivery=status_delivery, count=count)
-        for status_delivery, count in stats
-    ]
-
-    lsp_stats = get_dn_status_delivery_lsp_counts(
-        db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
-    )
-    logger.info(lsp_stats)
-    lsp_summary = [
-        StatusDeliveryLspSummary(
-            lsp=lsp_value,
-            total_dn=total_count,
-            status_not_empty=status_count,
-        )
-        for lsp_value, total_count, status_count in lsp_stats
-    ]
-
-    return StatusDeliveryStatsResponse(
-        data=data,
-        total=total,
-        lsp_summary=lsp_summary,
-    )
-
-
 @router.get(
     "/status-delivery/lsp-summary-records",
     response_model=StatusDeliveryLspSummaryHistoryResponse,

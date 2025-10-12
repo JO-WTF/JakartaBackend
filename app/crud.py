@@ -12,8 +12,6 @@ from .dn_columns import (
     ensure_dynamic_columns_loaded,
     get_mutable_dn_columns,
 )
-from app.utils.logging import logger
-
 
 _ACTIVE_DN_EXPR = func.coalesce(DN.is_deleted, "N") == "N"
 

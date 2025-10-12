@@ -14,7 +14,9 @@ from app.db import get_db
 from app.dn_columns import get_sheet_columns
 from app.models import DN
 from app.utils.query import normalize_batch_dn_numbers
-from app.utils.time import parse_gmt7_date_range, to_gmt7_iso
+from app.utils.time import parse_gmt7_date_range, to_gmt7_iso, TZ_GMT7
+from app.core.sync import _normalize_status_delivery_value
+from app.api.dn.stats import _normalize_lsp_label
 
 router = APIRouter(prefix="/api/dn")
 
@@ -156,7 +158,9 @@ def search_dn_list_api(
     phone_number_value = phone_number.strip() if isinstance(phone_number, str) and phone_number.strip() else None
     modified_from, modified_to = parse_gmt7_date_range(date_from, date_to)
 
-    total, items = search_dn_list(
+    # Fetch all matched records (no pagination) once, compute stats on full set,
+    # then slice to return the requested page.
+    total_all, all_items = search_dn_list(
         db,
         plan_mos_dates=plan_mos_dates,
         dn_numbers=dn_numbers,
@@ -176,12 +180,73 @@ def search_dn_list_api(
         project_request=project_value,
         last_modified_from=modified_from,
         last_modified_to=modified_to,
-        page=page,
-        page_size=actual_page_size,
+        page=1,
+        page_size=None,
     )
 
+    # Now produce paginated slice from all_items
+    if actual_page_size is None:
+        # page_size 'all' -> return everything
+        items = all_items
+        total = total_all
+    else:
+        start = (page - 1) * actual_page_size
+        end = start + actual_page_size
+        items = all_items[start:end]
+        total = total_all
+
+    # Reuse central normalization helpers if available
+
+    status_delivery_counts: dict[str, int] = {"Total": 0}
+    status_site_counts: dict[str, int] = {}
+    lsp_map: dict[str, dict[str, int]] = {}
+
+    # If caller did not specify plan_mos_dates, stats should only count
+    # records whose plan_mos_date equals today's date in GMT+7.
+    if not plan_mos_dates:
+        today_str = datetime.now(TZ_GMT7).strftime("%d %b %y")
+    else:
+        today_str = None
+
+    for dn in all_items:
+        # If no plan_mos_dates provided, only include records for today (GMT+7)
+        if today_str is not None:
+            dn_plan = getattr(dn, "plan_mos_date", None)
+            if dn_plan is None or dn_plan.strip() != today_str:
+                continue
+        raw_sd = getattr(dn, "status_delivery", None)
+        sd_norm = _normalize_status_delivery_value(raw_sd)
+        sd = sd_norm if sd_norm is not None else "No Status"
+        status_delivery_counts[sd] = status_delivery_counts.get(sd, 0) + 1
+        status_delivery_counts["Total"] += 1
+
+        ss_raw = getattr(dn, "status_site", None)
+        if ss_raw is not None and isinstance(ss_raw, str):
+            ss = ss_raw.strip()
+            if ss:
+                status_site_counts[ss] = status_site_counts.get(ss, 0) + 1
+
+        lsp_label = _normalize_lsp_label(getattr(dn, "lsp", None), getattr(dn, "plan_mos_date", None))
+        entry = lsp_map.setdefault(lsp_label, {"total_dn": 0, "status_not_empty": 0})
+        entry["total_dn"] += 1
+        # status_not_empty means status_delivery not empty/null
+        sd_present = getattr(dn, "status_delivery", None)
+        if sd_present is not None and str(sd_present).strip():
+            entry["status_not_empty"] += 1
+
+    lsp_summary = [
+        {"lsp": lsp_value, "total_dn": vals["total_dn"], "status_not_empty": vals["status_not_empty"]}
+        for lsp_value, vals in sorted(lsp_map.items())
+    ]
+
+    stats = {
+        "status_delivery": status_delivery_counts,
+        "status_site": status_site_counts,
+        "lsp_summary": lsp_summary,
+    }
+
     if not items:
-        return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": []}
+        return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": [], "stats": stats}
 
     latest_records = get_latest_dn_records_map(db, [it.dn_number for it in items])
     sheet_columns = get_sheet_columns()
@@ -212,7 +277,7 @@ def search_dn_list_api(
         row["latest_record_created_at"] = to_gmt7_iso(latest.created_at if latest else None)
         data.append(row)
 
-    return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": data}
+    return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": data, "stats": stats}
 
 
 @router.get("/records")
