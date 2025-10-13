@@ -341,45 +341,10 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         if latest:
             merge_start = perf_counter()
 
-            # Decide status_delivery by priority: POD > ARRIVED AT SITE > DEPARTED FROM WH > ARRIVED AT WH
-            def _priority(value: Any) -> int:
-                if value is None:
-                    return 0
-                s = str(value).strip().upper()
-                # Highest priority
-                if "POD" in s:
-                    return 4
-                # Arrived at site variants
-                if "ARRIVED AT SITE" in s or s == "ON SITE" or "ARRIVED AT SITE" == s:
-                    return 3
-                # Departed from warehouse
-                if "DEPARTED FROM WH" in s or ("DEPARTED" in s and "WH" in s):
-                    return 2
-                # Arrived at warehouse
-                if "ARRIVED AT WH" in s or ("ARRIVED" in s and "WH" in s):
-                    return 1
-                return 0
-
-            entry_status = entry.get("status_delivery") if isinstance(entry, dict) else None
-            # entry may be the raw sheet row; prefer the normalized sheet value stored in 'entry' if present,
-            # otherwise fall back to sheet_fields (constructed from entry earlier)
-            sheet_status_val = entry_status if entry_status is not None else sheet_fields.get("status_delivery")
-            latest_status_val = latest.status_delivery
-
-            # Compute priorities
-            sheet_pri = _priority(sheet_status_val)
-            latest_pri = _priority(latest_status_val)
-
-            # Choose the higher-priority status_delivery; if equal, prefer latest (DB) value
-            if sheet_pri > latest_pri:
-                chosen_status = sheet_status_val
-            else:
-                chosen_status = latest_status_val
-
             # Update sheet_fields: use chosen status and other values from latest
             sheet_fields.update(
                 {
-                    "status_delivery": chosen_status,
+                    "status_delivery": latest.status_delivery,
                     "status_site": latest.status_site,
                     "remark": latest.remark,
                     "photo_url": latest.photo_url,
