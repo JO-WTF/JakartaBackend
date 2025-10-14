@@ -64,11 +64,14 @@ STANDARD_STATUS_DELIVERY_VALUES: tuple[str, ...] = (
 STATUS_DELIVERY_LOOKUP: dict[str, str] = {
     canonical.lower(): canonical for canonical in STANDARD_STATUS_DELIVERY_VALUES
 }
-STATUS_DELIVERY_LOOKUP.update({
-    "Arrive at Warehouse": "ARRIVED AT WH",
-    "TRANSPORTING FROM WH": "DEPARTED FROM WH",
-    "TRANSPORTING FROM XD/PM": "DEPARTED FROM XD/PM",
-})
+# Additional synonyms for status_delivery. Keys are lower-cased to match lookup usage
+STATUS_DELIVERY_LOOKUP.update(
+    {k.lower(): v for k, v in {
+        "Arrive at Warehouse": "ARRIVED AT WH",
+        "TRANSPORTING FROM WH": "DEPARTED FROM WH",
+        "TRANSPORTING FROM XD/PM": "DEPARTED FROM XD/PM",
+    }.items()}
+)
 
 # Statuses that trigger arrival timestamp (write to column S)
 ARRIVAL_STATUSES: frozenset[str] = frozenset({
