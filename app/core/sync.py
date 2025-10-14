@@ -341,7 +341,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
             entry_plan_mos_date = (
                 datetime.strptime(entry.get("plan_mos_date"), "%d %b %y") if entry.get("plan_mos_date") else None
             )
-            existing_plan_mos_date = datetime.strptime(existing_dn.plan_mos_date, "%d %b %y") if existing_dn else None
+            existing_plan_mos_date = datetime.strptime(existing_dn.plan_mos_date, "%d %b %y") if existing_dn.plan_mos_date else None
             logger.info("Merging DN %s: entry_plan_mos_date='%s', existing_plan_mos_date='%s'",
                         number, entry_plan_mos_date, existing_plan_mos_date)
 
