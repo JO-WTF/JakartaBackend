@@ -6,7 +6,8 @@ from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence, Li
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_, case, exists
-from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat
+from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat, PM, PMInventory
+import unicodedata
 from .dn_columns import (
     filter_assignable_dn_fields,
     ensure_dynamic_columns_loaded,
@@ -430,6 +431,125 @@ def list_dn_by_dn_numbers(
         base_q.order_by(latest_record_expr.desc(), DN.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     )
     return total, items
+
+
+# PM / PMInventory helpers
+
+
+def create_pm(db: Session, pm_name: str, lng: str | None = None, lat: str | None = None) -> PM:
+    """Create or return existing PM by case-insensitive name."""
+    if not pm_name or not isinstance(pm_name, str):
+        raise ValueError("pm_name is required")
+    # Normalize unicode and trim whitespace to avoid mismatches
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    if not name:
+        raise ValueError("pm_name is required")
+
+    name_lower = name.lower()
+    existing = db.query(PM).filter(func.lower(PM.pm_name) == name_lower).one_or_none()
+    if existing:
+        return existing
+
+    pm = PM(pm_name=name, lng=lng, lat=lat)
+    db.add(pm)
+    db.commit()
+    db.refresh(pm)
+    return pm
+
+
+def pm_inbound(db: Session, pm_name: str, dn_number: str) -> PMInventory:
+    """Register a DN as inbound to a PM. Raises ValueError on errors."""
+    if not pm_name or not isinstance(pm_name, str):
+        raise ValueError("pm required")
+    if not dn_number or not isinstance(dn_number, str):
+        raise ValueError("invalid dn_number")
+
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    dn = dn_number.strip()
+
+    pm_obj = db.query(PM).filter(func.lower(PM.pm_name) == name.lower()).one_or_none()
+    if not pm_obj:
+        raise ValueError("pm not found")
+
+    existing = (
+        db.query(PMInventory)
+        .filter(PMInventory.dn_number == dn)
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .first()
+    )
+    if existing:
+        raise ValueError("dn already in inventory")
+
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    rec = PMInventory(pm_name=pm_obj.pm_name, dn_number=dn, status="in", in_time=now)
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
+def pm_outbound(db: Session, pm_name: str, dn_number: str) -> PMInventory:
+    """Mark a DN as outbound from a PM. Raises ValueError if not found."""
+    if not pm_name or not isinstance(pm_name, str):
+        raise ValueError("pm required")
+    if not dn_number or not isinstance(dn_number, str):
+        raise ValueError("invalid dn_number")
+
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    dn = dn_number.strip()
+
+    rec = (
+        db.query(PMInventory)
+        .filter(func.lower(PMInventory.pm_name) == name.lower())
+        .filter(PMInventory.dn_number == dn)
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .first()
+    )
+    if not rec:
+        raise ValueError("inventory record not found")
+
+    from datetime import datetime, timezone
+
+    rec.status = "out"
+    rec.out_time = datetime.now(timezone.utc)
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
+def find_pm_by_dn(db: Session, dn_number: str) -> PMInventory | None:
+    """Return latest PMInventory record for this DN that is not out, or None."""
+    if not dn_number or not isinstance(dn_number, str):
+        return None
+    dn = dn_number.strip()
+    rec = (
+        db.query(PMInventory)
+        .filter(PMInventory.dn_number == dn)
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .first()
+    )
+    return rec
+
+
+def list_pm_inventory(db: Session, pm_name: str) -> list[PMInventory]:
+    """Return all PMInventory records for pm_name with status != 'out'."""
+    if not pm_name or not isinstance(pm_name, str):
+        return []
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    records = (
+        db.query(PMInventory)
+        .filter(func.lower(PMInventory.pm_name) == name.lower())
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .all()
+    )
+    return records
 
 
 def get_existing_dn_numbers(db: Session, dn_numbers: Iterable[str]) -> Set[str]:
