@@ -69,6 +69,9 @@ class DnSyncResult:
 def _values_match(existing_value: Any, new_value: Any) -> bool:
     if existing_value is None and new_value is None:
         return True
+    if isinstance(existing_value, str) and isinstance(new_value, int):
+        existing_value = existing_value.strip() or None
+        new_value = str(new_value).strip() or None
     if isinstance(existing_value, str):
         existing_value = existing_value.strip() or None
     if isinstance(new_value, str):
@@ -164,15 +167,18 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         sheet_start = perf_counter()
         combined_df = process_all_sheets(sh)
         dn_sync_logger.debug("Fetched+combined sheet data in %.3fs", perf_counter() - sheet_start)
-
-        # Deduplicate by dn_number, keeping the last occurrence
+        # Normalize dn_number before deduplication
         if not combined_df.empty and "dn_number" in combined_df.columns:
             original_rows = len(combined_df)
+            # Apply normalization to dn_number column
+            combined_df["dn_number"] = combined_df["dn_number"].apply(
+                lambda x: normalize_dn(str(x).strip()) if x is not None else ""
+            )
             combined_df = combined_df.drop_duplicates(subset=["dn_number"], keep="last")
             deduplicated_rows = len(combined_df)
             if original_rows != deduplicated_rows:
                 logger.info(
-                    "Deduplicated Google Sheets data: %d rows -> %d rows (removed %d duplicates)",
+                    "Deduplicated Google Sheets data after dn_number normalization: %d rows -> %d rows (removed %d duplicates)",
                     original_rows,
                     deduplicated_rows,
                     original_rows - deduplicated_rows,
@@ -336,13 +342,6 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         existing_dn = existing_dn_map.get(number)
         if latest:
             merge_start = perf_counter()
-            # date format: 05 Oct 25
-            entry_plan_mos_date = (
-                datetime.strptime(entry.get("plan_mos_date"), "%d %b %y") if entry.get("plan_mos_date") else None
-            )
-            existing_plan_mos_date = datetime.strptime(existing_dn.plan_mos_date, "%d %b %y") if existing_dn.plan_mos_date else None
-            logger.info("Merging DN %s: entry_plan_mos_date='%s', existing_plan_mos_date='%s'",
-                        number, entry_plan_mos_date, existing_plan_mos_date)
 
             # Update sheet_fields: use chosen status and other values from latest
             sheet_fields.update(
@@ -377,7 +376,14 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                     )
                     continue
                 if not _values_match(getattr(existing_dn, key, None), value):
+                    if key == "status_delivery":
+                        if getattr(existing_dn, key, None) == "No Status" and value is None:
+                            continue
                     changed_fields[key] = value
+                    dn_sync_logger.info("Field '%s' changed for DN %s: %s -> %s",
+                                        key, number, getattr(existing_dn, key, None), value)
+            if changed_fields:
+                logger.info("changed_fields: %s", json.dumps(changed_fields))
             change_detection_total += perf_counter() - comparison_start
             if not changed_fields:
                 numbers_unchanged.add(number)
@@ -529,7 +535,7 @@ def sync_dn_sheet_with_new_session() -> DnSyncResult:
             synced_numbers = result.synced_numbers
             message = (
                 (
-                    "Synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)"
+                    "Sync Completed: synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)"
                     % (len(synced_numbers), result.created_count, result.updated_count, result.ignored_count)
                 )
                 if synced_numbers
