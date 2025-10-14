@@ -80,7 +80,11 @@ ARRIVAL_STATUSES: frozenset[str] = frozenset({
 })
 
 # Statuses that trigger departure timestamp (write to column R)
-DEPARTURE_STATUSES: frozenset[str] = frozenset({
-    "TRANSPORTING FROM WH",
-    "TRANSPORTING FROM XD/PM",
-})
+DEPARTURE_STATUSES: frozenset[str] = frozenset(
+    {
+        "TRANSPORTING FROM WH",
+        "TRANSPORTING FROM XD/PM",
+        "DEPARTED FROM WH",
+        "DEPARTED FROM XD/PM",
+    }
+)
