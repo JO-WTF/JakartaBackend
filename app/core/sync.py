@@ -321,7 +321,6 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
     numbers_unchanged: set[str] = set()
 
     assignable_filter_total = 0.0
-    non_null_filter_total = 0.0
     change_detection_total = 0.0
     payload_mutation_total = 0.0
     latest_merge_total = 0.0
@@ -356,7 +355,6 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                     "lat": latest.lat,
                 }
             )
-            logger.info(json.dumps(sheet_fields))
             latest_merge_total += perf_counter() - merge_start
         elif not existing_dn and number not in numbers_to_create:
             dn_sync_logger.debug("Preparing creation for DN %s from sheet data", number)
@@ -365,16 +363,10 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         assignable_fields = {k: v for k, v in sheet_fields.items() if k in mutable_columns}
         assignable_filter_total += perf_counter() - assignable_start
 
-        non_null_start = perf_counter()
-        non_null_fields = {key: value for key, value in assignable_fields.items() if value is not None}
-        non_null_filter_total += perf_counter() - non_null_start
-        if not non_null_fields:
-            continue
-
         comparison_start = perf_counter()
         if existing_dn:
             changed_fields: dict[str, Any] = {}
-            for key, value in non_null_fields.items():
+            for key, value in assignable_fields.items():
                 # Protect driver_contact_number from being overwritten if DN has been updated
                 if key == "driver_contact_number" and (existing_dn.update_count or 0) > 0:
                     # Skip this field - don't allow Google Sheet to overwrite it
@@ -402,12 +394,12 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         else:
             change_detection_total += perf_counter() - comparison_start
             numbers_to_create.add(number)
-            created_columns.update(non_null_fields.keys())
+            created_columns.update(assignable_fields.keys())
             payload = create_payload_by_number.setdefault(number, {"dn_number": number})
             mutation_start = perf_counter()
-            payload.update(non_null_fields)
+            payload.update(assignable_fields)
             payload_mutation_total += perf_counter() - mutation_start
-            created_field_total += len(non_null_fields)
+            created_field_total += len(assignable_fields)
 
     processing_duration = perf_counter() - processing_start
     total_payloads = len(create_payload_by_number) + len(update_payload_by_number)
