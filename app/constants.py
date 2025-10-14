@@ -52,15 +52,12 @@ VEHICLE_VALID_STATUSES: tuple[str, ...] = ("arrived", "departed")
 
 # Standard status_delivery values for normalization
 STANDARD_STATUS_DELIVERY_VALUES: tuple[str, ...] = (
-    "Prepare Vehicle",
-    "On the way",
-    "On Site",
+    "ARRIVED AT WH",
+    "DEPARTED FROM WH",
+    "ARRIVED AT XD/PM",
+    "DEPARTED FROM XD/PM",
+    "ARRIVED AT SITE",
     "POD",
-    "Waiting PIC Feedback",
-    "RePlan MOS due to LSP Delay",
-    "RePlan MOS Project",
-    "Cancel MOS",
-    "Close by RN",
 )
 
 # Lookup table for normalizing status_delivery values
@@ -68,9 +65,8 @@ STATUS_DELIVERY_LOOKUP: dict[str, str] = {
     canonical.lower(): canonical for canonical in STANDARD_STATUS_DELIVERY_VALUES
 }
 STATUS_DELIVERY_LOOKUP.update({
-    "close by rn": "Close by RN",
-    "no status": "No Status",
-    "on the way": "On the way",  # Ensure consistent capitalization
+    "TRANSPORTING FROM WH": "DEPARTED FROM WH",
+    "TRANSPORTING FROM XD/PM": "DEPARTED FROM XD/PM",
 })
 
 # Statuses that trigger arrival timestamp (write to column S)
