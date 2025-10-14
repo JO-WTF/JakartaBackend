@@ -65,6 +65,7 @@ STATUS_DELIVERY_LOOKUP: dict[str, str] = {
     canonical.lower(): canonical for canonical in STANDARD_STATUS_DELIVERY_VALUES
 }
 STATUS_DELIVERY_LOOKUP.update({
+    "Arrive at Warehouse": "ARRIVED AT WH",
     "TRANSPORTING FROM WH": "DEPARTED FROM WH",
     "TRANSPORTING FROM XD/PM": "DEPARTED FROM XD/PM",
 })
