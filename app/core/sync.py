@@ -348,27 +348,9 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
             # Update sheet_fields: use chosen status and other values from latest
             sheet_fields.update(
                 {
-                    "status_delivery": (
-                        ""
-                        if entry_plan_mos_date
-                        and existing_plan_mos_date
-                        and entry_plan_mos_date > existing_plan_mos_date
-                        else latest.status_delivery
-                    ),
-                    "status_site": (
-                        ""
-                        if entry_plan_mos_date
-                        and existing_plan_mos_date
-                        and entry_plan_mos_date > existing_plan_mos_date
-                        else latest.status_site
-                    ),
-                    "remark": (
-                        ""
-                        if entry_plan_mos_date
-                        and existing_plan_mos_date
-                        and entry_plan_mos_date > existing_plan_mos_date
-                        else latest.remark
-                    ),
+                    "status_delivery": entry.get("status_delivery"),
+                    "status_site": entry.get("status_site"),
+                    "remark": entry.get("remark"),
                     "photo_url": latest.photo_url,
                     "lng": latest.lng,
                     "lat": latest.lat,
