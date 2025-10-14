@@ -348,7 +348,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
             # Update sheet_fields: use chosen status and other values from latest
             sheet_fields.update(
                 {
-                    "status_delivery": entry.get("status_delivery"),
+                    "status_delivery": _normalize_status_delivery_value(entry.get("status_delivery")),
                     "status_site": entry.get("status_site"),
                     "remark": entry.get("remark"),
                     "photo_url": latest.photo_url,
