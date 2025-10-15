@@ -375,6 +375,34 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                         existing_dn.update_count,
                     )
                     continue
+
+                # Special handling for remark:
+                # - entry does not have a reliable 'remark' field; the sheet's issue remark
+                #   is provided in 'issue_remark'. We must NOT overwrite local remark with
+                #   an empty sheet value.
+                # - Only if local remark is empty (None or blank) AND issue_remark is
+                #   non-empty, do we set remark to issue_remark.
+                if key == "remark":
+                    issue_remark = entry.get("issue_remark")
+                    existing_remark = getattr(existing_dn, key, None)
+                    # Normalize empty strings as None for checking
+                    existing_empty = existing_remark is None or (
+                        isinstance(existing_remark, str) and not existing_remark.strip()
+                    )
+                    # Only apply remote issue_remark when it exists and local is empty
+                    if issue_remark is not None and isinstance(issue_remark, str) and issue_remark.strip() and existing_empty:
+                        if not _values_match(existing_remark, issue_remark):
+                            changed_fields[key] = issue_remark
+                            dn_sync_logger.info(
+                                "Field '%s' changed for DN %s: %s -> %s",
+                                key,
+                                number,
+                                existing_remark,
+                                issue_remark,
+                            )
+                    # In all other cases, do not overwrite local remark (skip)
+                    continue
+
                 if not _values_match(getattr(existing_dn, key, None), value):
                     if key == "status_delivery":
                         if getattr(existing_dn, key, None) == "No Status" and value is None:
