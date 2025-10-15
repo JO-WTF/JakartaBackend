@@ -28,6 +28,8 @@ DATE_FORMATS = [
 ]
 ARCHIVE_TEXT_COLOR = {"red": 0.6, "green": 0.6, "blue": 0.6}
 DEFAULT_ARCHIVE_THRESHOLD_DAYS = 7
+NOTE_TEXT = "Modified by Fast Tracker"
+NOTE_LINK_URI = "https://idnsc.dpdns.org/admin"
 
 __all__ = [
     "parse_date",
@@ -156,6 +158,22 @@ def sync_dn_record_to_sheet(
     column_names = get_sheet_columns()
     result: dict[str, Any] = {}
     try:
+        def _add_note_and_format(worksheet, a1_address: str, note_text: str | None = None, link_uri: str | None = None) -> None:
+            """Insert a note and apply formatting (fontSize=8 and optional link) to a cell.
+
+            This helper swallows exceptions and logs failures at debug level.
+            """
+            try:
+                if note_text:
+                    worksheet.insert_note(a1_address, note_text)
+                fmt: dict[str, Any] = {"textFormat": {"fontSize": 8}}
+                if link_uri:
+                    # nest link under textFormat if requested (gspread accepts this structure)
+                    fmt["textFormat"]["link"] = {"uri": link_uri}
+                worksheet.format(a1_address, fmt)
+            except Exception:
+                dn_sync_logger.debug("Failed to add note/format to cell %s", a1_address)
+
         gc = create_gspread_client()
         sh = gc.open_by_url(SPREADSHEET_URL)
         # When we open the spreadsheet for an update, refresh the sheet name->id mapping
@@ -200,17 +218,42 @@ def sync_dn_record_to_sheet(
             row_index = found_row_index
             result["row_corrected"] = row_index
 
-        # 写 status_delivery
+        # Collect repeatCell requests for batch update (value + note + formatting)
+        batch_requests: List[dict[str, Any]] = []
+
+        def _add_repeat_cell_request(col_pos: int, value: str) -> None:
+            # col_pos is 1-based column index
+            start_row = row_index - 1
+            start_col = col_pos - 1
+            batch_requests.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": worksheet.id,
+                            "startRowIndex": start_row,
+                            "endRowIndex": start_row + 1,
+                            "startColumnIndex": start_col,
+                            "endColumnIndex": start_col + 1,
+                        },
+                        "cell": {
+                            "userEnteredValue": {"stringValue": str(value)},
+                            "note": NOTE_TEXT,
+                            "userEnteredFormat": {"textFormat": {"fontSize": 8, "link": {"uri": NOTE_LINK_URI}}},
+                        },
+                        "fields": "userEnteredValue,note,userEnteredFormat.textFormat",
+                    }
+                }
+            )
+
+        # Prepare values to write
         if status_delivery is not None:
-            worksheet.update_cell(row_index, status_delivery_column_position, status_delivery)
+            _add_repeat_cell_request(status_delivery_column_position, status_delivery)
             result["status_delivery_updated"] = True
-        # 写 status_site
         if status_site_column_position is not None and status_site is not None:
-            worksheet.update_cell(row_index, status_site_column_position, status_site)
+            _add_repeat_cell_request(status_site_column_position, status_site)
             result["status_site_updated"] = True
-        # 写 issue_remark
         if issue_remark_column_position is not None and remark is not None:
-            worksheet.update_cell(row_index, issue_remark_column_position, remark)
+            _add_repeat_cell_request(issue_remark_column_position, remark)
             result["issue_remark_updated"] = True
 
         # 写 atd/ata
@@ -218,20 +261,39 @@ def sync_dn_record_to_sheet(
         now_gmt7 = datetime.now(TZ_GMT7)
         timestamp_str = f"{now_gmt7.month}/{now_gmt7.day}/{now_gmt7.year} {now_gmt7.hour}:{now_gmt7.minute:02d}:{now_gmt7.second:02d}"
         if status_delivery_upper in ARRIVAL_STATUSES and ata_column_position is not None:
-            worksheet.update_cell(row_index, ata_column_position, timestamp_str)
+            _add_repeat_cell_request(ata_column_position, timestamp_str)
             result["actual_arrive_time_ata_updated"] = True
         if status_delivery_upper in DEPARTURE_STATUSES and atd_column_position is not None:
-            worksheet.update_cell(row_index, atd_column_position, timestamp_str)
+            _add_repeat_cell_request(atd_column_position, timestamp_str)
             result["actual_depart_from_start_point_atd_updated"] = True
 
         # 添加 note 和 hyperlink 到 status_delivery cell
-        try:
-            cell_address = gspread.utils.rowcol_to_a1(row_index, status_delivery_column_position)
-            note_text = f"Modified by Fast Tracker ({updated_by})" if updated_by else "Modified by Fast Tracker"
-            worksheet.insert_note(cell_address, note_text)
-            worksheet.format(cell_address, {"textFormat": {"link": {"uri": "https://idnsc.dpdns.org/admin"}}})
-        except Exception as note_exc:
-            result["note_error"] = str(note_exc)
+        # Execute batch update (single request containing all repeatCell requests)
+        if batch_requests:
+            try:
+                sh.batch_update({"requests": batch_requests})
+            except Exception as bexc:
+                # fallback: try to write individually if batch fails
+                dn_sync_logger.exception("Batch update failed, falling back to per-cell updates: %s", bexc)
+                for req in batch_requests:
+                    try:
+                        r = req.get("repeatCell")
+                        rng = r.get("range")
+                        cell = r.get("cell")
+                        # convert range to a1
+                        r0 = rng.get("startRowIndex") + 1
+                        c0 = rng.get("startColumnIndex") + 1
+                        a1 = gspread.utils.rowcol_to_a1(r0, c0)
+                        # write value if present
+                        val = None
+                        if cell and cell.get("userEnteredValue"):
+                            val = cell.get("userEnteredValue").get("stringValue")
+                        if val is not None:
+                            worksheet.update_cell(r0, c0, val)
+                        # add note & format
+                        _add_note_and_format(worksheet, a1, note_text=NOTE_TEXT, link_uri=NOTE_LINK_URI)
+                    except Exception:
+                        dn_sync_logger.exception("Fallback per-cell write failed for request: %s", req)
 
         result["updated"] = True
         result["row"] = row_index
@@ -345,8 +407,16 @@ def mark_plan_mos_rows_for_archiving(threshold_days: int | None = None) -> dict[
                                 "startColumnIndex": 0,
                                 "endColumnIndex": effective_color_range_end,
                             },
-                            "cell": {"userEnteredFormat": {"textFormat": {"foregroundColor": ARCHIVE_TEXT_COLOR}}},
-                            "fields": "userEnteredFormat.textFormat.foregroundColor",
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "textFormat": {
+                                        "foregroundColor": ARCHIVE_TEXT_COLOR,
+                                        "fontSize": 8,
+                                        "link": {"uri": NOTE_LINK_URI},
+                                    }
+                                }
+                            },
+                            "fields": "userEnteredFormat.textFormat.foregroundColor,userEnteredFormat.textFormat.fontSize,userEnteredFormat.textFormat.link",
                         }
                     }
                 )
