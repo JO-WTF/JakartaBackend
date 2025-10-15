@@ -113,7 +113,7 @@ def search_dn_list_api(
     show_deleted: bool = Query(False, description="是否显示已软删除的记录"),
     lsp: Optional[List[str]] = Query(None, description="LSP"),
     region: Optional[List[str]] = Query(None, description="Region"),
-    area: str | None = Query(None, description="Area"),
+    area: Optional[List[str]] = Query(None, description="Area"),
     status_wh: Optional[List[str]] = Query(None, description="Status WH"),
     subcon: Optional[List[str]] = Query(None, description="Subcon"),
     project: str | None = Query(None, description="Project request"),
@@ -153,7 +153,7 @@ def search_dn_list_api(
     region_values = _collect_query_values(region)
     status_wh_values = _collect_query_values(status_wh)
     subcon_values = _collect_query_values(subcon)
-    area_value = area.strip() if area else None
+    area_values = _collect_query_values(area)
     project_value = project.strip() if project else None
     phone_number_value = phone_number.strip() if isinstance(phone_number, str) and phone_number.strip() else None
     modified_from, modified_to = parse_gmt7_date_range(date_from, date_to)
@@ -174,7 +174,7 @@ def search_dn_list_api(
         show_deleted=show_deleted,
         lsp_values=lsp_values,
         region_values=region_values,
-        area=area_value,
+        area=area_values,
         status_wh_values=status_wh_values,
         subcon_values=subcon_values,
         project_request=project_value,

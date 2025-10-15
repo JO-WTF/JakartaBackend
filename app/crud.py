@@ -609,7 +609,7 @@ def search_dn_list(
     has_coordinate: bool | None = None,
     lsp_values: Sequence[str] | None = None,
     region_values: Sequence[str] | None = None,
-    area: str | None = None,
+    area: Sequence[str] | None = None,
     status_wh_values: Sequence[str] | None = None,
     subcon_values: Sequence[str] | None = None,
     project_request: str | None = None,
@@ -730,8 +730,9 @@ def search_dn_list(
     ]
     if trimmed_region_values:
         conds.append(func.trim(DN.region).in_(trimmed_region_values))
-    if area:
-        conds.append(DN.area == area)
+    trimmed_area_values = [value.strip() for value in (area or []) if isinstance(value, str) and value.strip()]
+    if trimmed_area_values:
+        conds.append(func.trim(DN.area).in_(trimmed_area_values))
     trimmed_status_wh_values = [
         value.strip() for value in (status_wh_values or []) if isinstance(value, str) and value.strip()
     ]
