@@ -77,6 +77,7 @@ STATUS_DELIVERY_LOOKUP.update(
 ARRIVAL_STATUSES: frozenset[str] = frozenset({
     "ARRIVED AT XD/PM",
     "ARRIVED AT SITE",
+    "POD"
 })
 
 # Statuses that trigger departure timestamp (write to column R)
