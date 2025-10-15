@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from typing import Any, List, Optional
+import json
 from datetime import datetime
+from app.utils.logging import logger
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -107,7 +109,8 @@ def update_dn(
     if status_upper in DEPARTURE_STATUSES and timestamp_value is not None:
         ensure_payload["actual_depart_from_start_point_atd"] = timestamp_value
 
-    ensure_dn(db, dn_number, **ensure_payload)
+    # Ensure DN exists / update fields from payload; capture returned DN row
+    dn_row = ensure_dn(db, dn_number, **ensure_payload)
 
     rec = add_dn_record(
         db,
@@ -129,9 +132,38 @@ def update_dn(
     )
 
     if should_check_sheet:
-        gspread_update_result = sync_dn_record_to_sheet(
+        logger.info("Syncing DN record to Google Sheet %s %d", gs_sheet_name, gs_row_index)
+        gpread_result = sync_dn_record_to_sheet(
             gs_sheet_name, gs_row_index, dn_number, status_delivery, status_site, remark, updated_by_value
         )
+        logger.info("Google Sheet update result: %s", json.dumps(gpread_result))
+        # preserve original var name used later
+        gspread_update_result = gpread_result
+
+        # If Google Sheet search corrected the DN row, persist it immediately
+        try:
+            if gpread_result and isinstance(gpread_result, dict):
+                corrected_row = None
+                # sync_dn_record_to_sheet sets 'row_corrected' when it finds the correct row
+                if "row_corrected" in gpread_result and isinstance(gpread_result["row_corrected"], int):
+                    corrected_row = gpread_result["row_corrected"]
+                # fallback to 'row' which represents the row used
+                elif "row" in gpread_result and isinstance(gpread_result["row"], int):
+                    corrected_row = gpread_result["row"]
+
+                if corrected_row is not None and dn_row is not None:
+                    # Update DN.gs_row and gs_sheet if changed
+                    if getattr(dn_row, "gs_row", None) != corrected_row:
+                        dn_row.gs_row = corrected_row
+                        # ensure gs_sheet is set as well
+                        if gs_sheet_name:
+                            dn_row.gs_sheet = gs_sheet_name
+                        db.add(dn_row)
+                        db.commit()
+        except Exception:
+            # Don't fail the API if persisting gs_row fails; include info in response instead
+            # (we simply ignore persistence errors here)
+            pass
 
     response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}
     if gspread_update_result is not None:

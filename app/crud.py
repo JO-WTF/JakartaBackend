@@ -6,7 +6,8 @@ from typing import Any, Optional, Iterable, Tuple, List, Set, Dict, Sequence, Li
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_, case, exists
-from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat
+from .models import DN, DNRecord, DNSyncLog, Vehicle, StatusDeliveryLspStat, PM, PMInventory
+import unicodedata
 from .dn_columns import (
     filter_assignable_dn_fields,
     ensure_dynamic_columns_loaded,
@@ -432,6 +433,125 @@ def list_dn_by_dn_numbers(
     return total, items
 
 
+# PM / PMInventory helpers
+
+
+def create_pm(db: Session, pm_name: str, lng: str | None = None, lat: str | None = None) -> PM:
+    """Create or return existing PM by case-insensitive name."""
+    if not pm_name or not isinstance(pm_name, str):
+        raise ValueError("pm_name is required")
+    # Normalize unicode and trim whitespace to avoid mismatches
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    if not name:
+        raise ValueError("pm_name is required")
+
+    name_lower = name.lower()
+    existing = db.query(PM).filter(func.lower(PM.pm_name) == name_lower).one_or_none()
+    if existing:
+        return existing
+
+    pm = PM(pm_name=name, lng=lng, lat=lat)
+    db.add(pm)
+    db.commit()
+    db.refresh(pm)
+    return pm
+
+
+def pm_inbound(db: Session, pm_name: str, dn_number: str) -> PMInventory:
+    """Register a DN as inbound to a PM. Raises ValueError on errors."""
+    if not pm_name or not isinstance(pm_name, str):
+        raise ValueError("pm required")
+    if not dn_number or not isinstance(dn_number, str):
+        raise ValueError("invalid dn_number")
+
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    dn = dn_number.strip()
+
+    pm_obj = db.query(PM).filter(func.lower(PM.pm_name) == name.lower()).one_or_none()
+    if not pm_obj:
+        raise ValueError("pm not found")
+
+    existing = (
+        db.query(PMInventory)
+        .filter(PMInventory.dn_number == dn)
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .first()
+    )
+    if existing:
+        raise ValueError("dn already in inventory")
+
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    rec = PMInventory(pm_name=pm_obj.pm_name, dn_number=dn, status="in", in_time=now)
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
+def pm_outbound(db: Session, pm_name: str, dn_number: str) -> PMInventory:
+    """Mark a DN as outbound from a PM. Raises ValueError if not found."""
+    if not pm_name or not isinstance(pm_name, str):
+        raise ValueError("pm required")
+    if not dn_number or not isinstance(dn_number, str):
+        raise ValueError("invalid dn_number")
+
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    dn = dn_number.strip()
+
+    rec = (
+        db.query(PMInventory)
+        .filter(func.lower(PMInventory.pm_name) == name.lower())
+        .filter(PMInventory.dn_number == dn)
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .first()
+    )
+    if not rec:
+        raise ValueError("inventory record not found")
+
+    from datetime import datetime, timezone
+
+    rec.status = "out"
+    rec.out_time = datetime.now(timezone.utc)
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
+def find_pm_by_dn(db: Session, dn_number: str) -> PMInventory | None:
+    """Return latest PMInventory record for this DN that is not out, or None."""
+    if not dn_number or not isinstance(dn_number, str):
+        return None
+    dn = dn_number.strip()
+    rec = (
+        db.query(PMInventory)
+        .filter(PMInventory.dn_number == dn)
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .first()
+    )
+    return rec
+
+
+def list_pm_inventory(db: Session, pm_name: str) -> list[PMInventory]:
+    """Return all PMInventory records for pm_name with status != 'out'."""
+    if not pm_name or not isinstance(pm_name, str):
+        return []
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    records = (
+        db.query(PMInventory)
+        .filter(func.lower(PMInventory.pm_name) == name.lower())
+        .filter(func.coalesce(PMInventory.status, "") != "out")
+        .order_by(PMInventory.in_time.desc())
+        .all()
+    )
+    return records
+
+
 def get_existing_dn_numbers(db: Session, dn_numbers: Iterable[str]) -> Set[str]:
     unique_numbers = {dn_number for dn_number in dn_numbers if dn_number}
     if not unique_numbers:
@@ -489,7 +609,7 @@ def search_dn_list(
     has_coordinate: bool | None = None,
     lsp_values: Sequence[str] | None = None,
     region_values: Sequence[str] | None = None,
-    area: str | None = None,
+    area: Sequence[str] | None = None,
     status_wh_values: Sequence[str] | None = None,
     subcon_values: Sequence[str] | None = None,
     project_request: str | None = None,
@@ -610,8 +730,9 @@ def search_dn_list(
     ]
     if trimmed_region_values:
         conds.append(func.trim(DN.region).in_(trimmed_region_values))
-    if area:
-        conds.append(DN.area == area)
+    trimmed_area_values = [value.strip() for value in (area or []) if isinstance(value, str) and value.strip()]
+    if trimmed_area_values:
+        conds.append(func.trim(DN.area).in_(trimmed_area_values))
     trimmed_status_wh_values = [
         value.strip() for value in (status_wh_values or []) if isinstance(value, str) and value.strip()
     ]
@@ -751,7 +872,12 @@ def get_dn_status_delivery_lsp_counts(
     status_site_normalized = func.lower(func.coalesce(func.trim(DN.status_site), ""))
     status_site_matches = status_site_normalized != "pic not confirmed"
     status_delivery_trimmed = func.trim(DN.status_delivery)
-    status_delivery_present = func.coalesce(status_delivery_trimmed, "") != ""
+    # Consider status_delivery present only if it's non-empty and not the sentinel "No Status" (case-insensitive)
+    status_delivery_present = and_(
+        DN.status_delivery.isnot(None),
+        func.length(status_delivery_trimmed) > 0,
+        func.lower(status_delivery_trimmed) != "no status",
+    )
 
     total_case = case((status_site_matches, 1), else_=0)
     status_not_empty_case = case((and_(status_site_matches, status_delivery_present), 1), else_=0)

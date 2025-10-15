@@ -106,6 +106,26 @@ class DNSyncLog(Base):
         return []
 
 
+class PMInventory(Base):
+    __tablename__ = "pm_inventory"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pm_name = Column(String(128), nullable=False, index=True)
+    dn_number = Column(String(64), nullable=False, index=True)
+    status = Column(String(32), nullable=False)
+    in_time = Column(DateTime(timezone=True), nullable=True)
+    out_time = Column(DateTime(timezone=True), nullable=True)
+
+
+class PM(Base):
+    __tablename__ = "pm"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pm_name = Column(String(128), nullable=False, index=True)
+    lng = Column(String(32), nullable=True)
+    lat = Column(String(32), nullable=True)
+
+
 class StatusDeliveryLspStat(Base):
     __tablename__ = "status_delivery_lsp_stat"
     __table_args__ = (

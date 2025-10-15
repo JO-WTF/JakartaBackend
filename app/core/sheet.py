@@ -168,9 +168,14 @@ def sync_dn_record_to_sheet(
             ata_column_position = column_names.index("actual_arrive_time_ata") + 1
 
         # 校验 DN 行
-        dn_cell_value = worksheet.cell(row_index, dn_column_position).value
-        normalized_sheet_dn = normalize_dn(dn_cell_value or "")
-        if normalized_sheet_dn != dn_number:
+        found_cell_value = False
+        try:
+            dn_cell_value = worksheet.cell(row_index, dn_column_position).value
+            normalized_sheet_dn = normalize_dn(dn_cell_value or "")
+        except Exception:
+            found_cell_value = False
+
+        if not found_cell_value or normalized_sheet_dn != dn_number:
             # 查找正确行
             dn_column_values = worksheet.col_values(dn_column_position)
             found_matches = [
