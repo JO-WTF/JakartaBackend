@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from typing import Any
 
 import gspread
@@ -11,7 +12,7 @@ import gspread
 from app.settings import settings
 from app.utils.logging import logger
 
-__all__ = ["create_gspread_client", "SPREADSHEET_URL", "GS_KEY_PATH"]
+__all__ = ["create_gspread_client", "SPREADSHEET_URL", "GS_KEY_PATH", "make_gs_cell_url"]
 
 GS_KEY_PATH = Path("/etc/secrets/gskey.json")
 SPREADSHEET_URL = settings.google_spreadsheet_url
@@ -68,3 +69,38 @@ def create_gspread_client() -> gspread.Client:
 
     logger.info("Using gspread service account authentication")
     return gc
+
+
+def make_gs_cell_url(sheet_name: str | None, row: int | None) -> str | None:
+    """Construct a Google Sheets URL that points to a given sheet (by title) and row.
+
+    Returns None if any input is missing or the sheet id cannot be resolved.
+
+    Example result:
+      https://docs.google.com/spreadsheets/d/<<id>>/edit#gid=12345&range=A12
+    """
+    try:
+        if not sheet_name or not row:
+            return None
+        # avoid importing state at module import time in case of early config checks
+        from app import state
+
+        sheet_id = state.get_sheet_id_by_name(sheet_name)
+        if sheet_id is None:
+            return None
+
+        parsed = urlparse(SPREADSHEET_URL)
+        # parse existing query params and replace/add gid
+        qsl = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        qsl["gid"] = str(sheet_id)
+        # set range to column A and the given row
+        qsl["range"] = f"T{int(row)}"
+        new_query = urlencode(qsl)
+
+        # Always set fragment to gid=sheet_id
+        new_fragment = f"gid={sheet_id}"
+
+        rebuilt = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, new_fragment))
+        return rebuilt
+    except Exception:
+        return None

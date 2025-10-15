@@ -16,6 +16,7 @@ from app.models import DN
 from app.utils.query import normalize_batch_dn_numbers
 from app.utils.time import parse_gmt7_date_range, to_gmt7_iso, TZ_GMT7
 from app.core.sync import _normalize_status_delivery_value
+from app.core.google import make_gs_cell_url
 from app.api.dn.stats import _normalize_lsp_label
 
 router = APIRouter(prefix="/api/dn")
@@ -85,6 +86,7 @@ async def get_dn_list(db: Session = Depends(get_db)):
             "last_updated_by": it.last_updated_by,
             "gs_sheet": it.gs_sheet,
             "gs_row": it.gs_row,
+            "gs_cell_url": make_gs_cell_url(getattr(it, "gs_sheet", None), getattr(it, "gs_row", None)),
             "is_deleted": it.is_deleted,
             "update_count": it.update_count,
         }
@@ -266,6 +268,7 @@ def search_dn_list_api(
             "last_updated_by": it.last_updated_by,
             "gs_sheet": it.gs_sheet,
             "gs_row": it.gs_row,
+            "gs_cell_url": make_gs_cell_url(getattr(it, "gs_sheet", None), getattr(it, "gs_row", None)),
             "is_deleted": it.is_deleted,
             "update_count": it.update_count,
         }
@@ -336,6 +339,7 @@ def batch_search_dn_list(
             "last_updated_by": it.last_updated_by,
             "gs_sheet": it.gs_sheet,
             "gs_row": it.gs_row,
+            "gs_cell_url": make_gs_cell_url(getattr(it, "gs_sheet", None), getattr(it, "gs_row", None)),
             "is_deleted": it.is_deleted,
             "update_count": it.update_count,
         }

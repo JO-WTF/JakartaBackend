@@ -11,6 +11,7 @@ import gspread.utils
 import pandas as pd
 
 from app.core.google import SPREADSHEET_URL, create_gspread_client
+from app import state
 from app.dn_columns import get_sheet_columns
 from app.utils.logging import dn_sync_logger, logger
 from app.utils.string import normalize_dn
@@ -114,6 +115,12 @@ def process_all_sheets(sh) -> pd.DataFrame:
     """Combine all plan sheets into a single DataFrame."""
     total_start = perf_counter()
     plan_sheets = fetch_plan_sheets(sh)
+    # Update runtime mapping of sheet title -> id whenever we enumerate worksheets
+    try:
+        state.update_gs_map_from_sheets(plan_sheets)
+        dn_sync_logger.debug("Updated gs_sheet_name_to_id_map with %d sheets", len(plan_sheets))
+    except Exception:
+        dn_sync_logger.exception("Failed to update gs_sheet_name_to_id_map")
     columns = get_sheet_columns()
     all_data = [process_sheet_data(sheet, columns) for sheet in plan_sheets]
     if not all_data:
@@ -151,6 +158,11 @@ def sync_dn_record_to_sheet(
     try:
         gc = create_gspread_client()
         sh = gc.open_by_url(SPREADSHEET_URL)
+        # When we open the spreadsheet for an update, refresh the sheet name->id mapping
+        try:
+            state.update_gs_map_from_sheets(sh.worksheets())
+        except Exception:
+            dn_sync_logger.debug("Failed to refresh gs_sheet_name_to_id_map during sync_dn_record_to_sheet")
         worksheet = sh.worksheet(sheet_name)
         dn_column_position = column_names.index("dn_number") + 1
         status_delivery_column_position = column_names.index("status_delivery") + 1
@@ -257,6 +269,11 @@ def mark_plan_mos_rows_for_archiving(threshold_days: int | None = None) -> dict[
     gc = create_gspread_client()
     sh = gc.open_by_url(SPREADSHEET_URL)
     plan_sheets = fetch_plan_sheets(sh)
+    # keep the in-memory sheet name -> id mapping up-to-date
+    try:
+        state.update_gs_map_from_sheets(plan_sheets)
+    except Exception:
+        dn_sync_logger.debug("Failed to update gs_sheet_name_to_id_map during mark_plan_mos_rows_for_archiving")
     sheet_titles = [sheet.title for sheet in plan_sheets]
 
     matched_rows = 0
