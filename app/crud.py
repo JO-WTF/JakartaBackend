@@ -941,6 +941,24 @@ def get_dn_latest_update_snapshots(
         query = query.filter(func.trim(DN.lsp) == trimmed_lsp)
 
     rows = query.all()
+
+    # If lsp is empty, only include rows whose lsp matches HTM.{alnum}-IDN
+    trimmed_lsp = lsp.strip() if isinstance(lsp, str) else None
+    if not trimmed_lsp:
+        import re
+
+        pattern = re.compile(r"^HTM\.[A-Za-z0-9]+-IDN$", re.IGNORECASE)
+        filtered = [
+            (
+                row.lsp,
+                row.plan_mos_date,
+                row.latest_record_created_at,
+            )
+            for row in rows
+            if isinstance(row.lsp, str) and pattern.match(row.lsp.strip())
+        ]
+        return filtered
+
     return [
         (
             row.lsp,
