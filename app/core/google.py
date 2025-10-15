@@ -94,7 +94,7 @@ def make_gs_cell_url(sheet_name: str | None, row: int | None) -> str | None:
         qsl = dict(parse_qsl(parsed.query, keep_blank_values=True))
         qsl["gid"] = str(sheet_id)
         # set range to column A and the given row
-        qsl["range"] = f"T{int(row)}"
+        qsl["range"] = f"R{int(row)}"
         new_query = urlencode(qsl)
 
         # Always set fragment to gid=sheet_id
