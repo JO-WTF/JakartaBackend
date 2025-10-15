@@ -10,19 +10,15 @@ from sqlalchemy.orm import Session
 
 from app.constants import (
     DN_RE,
-    VALID_STATUSES,
     ARRIVAL_STATUSES,
     DEPARTURE_STATUSES,
 )
-from app.core.sheet import sync_delivery_status_to_sheet, sync_status_timestamp_to_sheet
-from app.core.sync import _normalize_status_delivery_value
 from app.crud import (
     add_dn_record,
     delete_dn,
     delete_dn_record,
     ensure_dn,
     get_existing_dn_numbers,
-    update_dn_record,
     _ACTIVE_DN_EXPR,
 )
 from app.db import get_db
@@ -30,23 +26,9 @@ from app.models import DN
 from app.storage import save_file
 from app.utils.string import normalize_dn
 from app.utils.time import TZ_GMT7
+from app.core.sheet import sync_dn_record_to_sheet
 
 router = APIRouter(prefix="/api/dn")
-
-
-def _derive_status_delivery_from_status(status: str) -> str | None:
-    """Return the inferred status_delivery value for a DN status."""
-
-    normalized = (status or "").strip().upper()
-    if normalized == "ARRIVED AT SITE":
-        return "On Site"
-    if normalized == "POD":
-        return "POD"
-    if normalized == "ARRIVED AT WH":
-        return None
-    if not normalized:
-        return None
-    return "On the way"
 
 
 def _current_timestamp_gmt7() -> str:
@@ -57,9 +39,8 @@ def _current_timestamp_gmt7() -> str:
 @router.post("/update")
 def update_dn(
     dnNumber: str = Form(...),
-    status: str = Form(...),
-    delivery_status: str | None = Form(None),
-    status_delivery: str | None = Form(None, description="Backward compatibility alias for delivery_status form field"),
+    status_delivery: str | None = Form(None, description="配送状态，可选"),
+    status_site: str | None = Form(None, description="站点状态，可选"),
     remark: str | None = Form(None),
     photo: UploadFile | None = File(None),
     lng: str | float | None = Form(None),
@@ -71,8 +52,6 @@ def update_dn(
     dn_number = normalize_dn(dnNumber)
     if not DN_RE.fullmatch(dn_number):
         raise HTTPException(status_code=400, detail="Invalid DN number")
-    if status not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail="Invalid status")
 
     photo_url = None
     if photo and photo.filename:
@@ -86,20 +65,9 @@ def update_dn(
     if updated_by is not None:
         updated_by_value = updated_by.strip() or None
 
-    delivery_status_raw = delivery_status if delivery_status is not None else status_delivery
-    delivery_status_value = (delivery_status_raw or "").strip() or None
-
     phone_number_value = None
     if isinstance(phone_number, str):
         phone_number_value = phone_number.strip() or None
-
-    if delivery_status_value is None:
-        delivery_status_value = _derive_status_delivery_from_status(status)
-    else:
-        # 规范化用户输入
-        delivery_status_value = _normalize_status_delivery_value(delivery_status_value)
-        if delivery_status_value is None:
-            delivery_status_value = "No Status"
 
     existing_dn = db.query(DN).filter(DN.dn_number == dn_number).filter(_ACTIVE_DN_EXPR).one_or_none()
     gs_sheet_name = existing_dn.gs_sheet if existing_dn is not None else None
@@ -116,20 +84,21 @@ def update_dn(
         gs_row_index = None
 
     ensure_payload: dict[str, Any] = {
-        "status": status,
         "remark": remark,
         "photo_url": photo_url,
         "lng": lng_val,
         "lat": lat_val,
     }
-    if delivery_status_value is not None:
-        ensure_payload["status_delivery"] = delivery_status_value
+    if status_site:
+        ensure_payload["status_site"] = status_site
+    if status_delivery:
+        ensure_payload["status_delivery"] = status_delivery
     if updated_by_value is not None:
         ensure_payload["last_updated_by"] = updated_by_value
     if phone_number_value is not None:
         ensure_payload["driver_contact_number"] = phone_number_value
 
-    status_upper = (status or "").strip().upper()
+    status_upper = (status_delivery or "").strip().upper()
     timestamp_value: str | None = None
     if status_upper in ARRIVAL_STATUSES or status_upper in DEPARTURE_STATUSES:
         timestamp_value = _current_timestamp_gmt7()
@@ -143,7 +112,8 @@ def update_dn(
     rec = add_dn_record(
         db,
         dn_number=dn_number,
-        status=status,
+        status_delivery=status_delivery,
+        status_site=status_site,
         remark=remark,
         photo_url=photo_url,
         lng=lng_val,
@@ -155,16 +125,12 @@ def update_dn(
     gspread_update_result: dict[str, Any] | None = None
     gspread_timestamp_result: dict[str, Any] | None = None
     should_check_sheet = (
-        gs_sheet_name and isinstance(gs_row_index, int) and gs_row_index > 0 and delivery_status_value is not None
+        gs_sheet_name and isinstance(gs_row_index, int) and gs_row_index > 0 and status_delivery is not None
     )
 
     if should_check_sheet:
-        gspread_update_result = sync_delivery_status_to_sheet(
-            gs_sheet_name, gs_row_index, dn_number, delivery_status_value, updated_by_value
-        )
-        # Write timestamp to R or S column based on status
-        gspread_timestamp_result = sync_status_timestamp_to_sheet(
-            gs_sheet_name, gs_row_index, dn_number, status, updated_by_value
+        gspread_update_result = sync_dn_record_to_sheet(
+            gs_sheet_name, gs_row_index, dn_number, status_delivery, status_site, remark, updated_by_value
         )
 
     response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}
@@ -217,8 +183,8 @@ def batch_update_dn(
         if number in existing_numbers:
             add_failure(number, "DN number 已存在")
             continue
-        ensure_dn(db, number, status="NO STATUS")
-        add_dn_record(db, dn_number=number, status="NO STATUS", remark=None, photo_url=None, lng=None, lat=None)
+        ensure_dn(db, number, status_delivery="NO STATUS", status_site=None)
+        add_dn_record(db, dn_number=number, status_delivery="NO STATUS", status_site=None, remark=None, photo_url=None, lng=None, lat=None)
         success_numbers.append(number)
 
     status_value = "ok" if success_numbers else "fail"
@@ -229,92 +195,6 @@ def batch_update_dn(
         "success_dn_numbers": success_numbers,
         "failure_details": failure_details,
     }
-
-
-@router.put("/update/{id}")
-def edit_dn_record(
-    id: int,
-    status: Optional[str] = Form(None),
-    remark: Optional[str] = Form(None),
-    updated_by: Optional[str] = Form(None),
-    phone_number: Optional[str] = Form(None, alias="phoneNumber"),
-    photo: UploadFile | None = File(None),
-    json_body: Optional[dict] = Body(None),
-    db: Session = Depends(get_db),
-):
-    updated_by_provided = updated_by is not None
-    phone_number_provided = phone_number is not None
-
-    if json_body and isinstance(json_body, dict):
-        if "status" in json_body:
-            status = json_body.get("status")
-        if "remark" in json_body:
-            remark = json_body.get("remark")
-        if "updated_by" in json_body:
-            updated_by = json_body.get("updated_by")
-            updated_by_provided = True
-        if "phone_number" in json_body:
-            phone_number = json_body.get("phone_number")
-            phone_number_provided = True
-        elif "phoneNumber" in json_body:
-            phone_number = json_body.get("phoneNumber")
-            phone_number_provided = True
-
-    if status is not None and status.strip() == "":
-        status = None
-    if remark is not None:
-        remark = remark.strip()
-        if remark == "":
-            remark = None
-        elif len(remark) > 1000:
-            raise HTTPException(status_code=400, detail="remark too long (max 1000 chars)")
-
-    if isinstance(updated_by, str):
-        updated_by = updated_by.strip() or None
-    elif updated_by_provided and updated_by is not None:
-        updated_by = str(updated_by)
-
-    if isinstance(phone_number, str):
-        phone_number = phone_number.strip() or None
-    elif phone_number_provided and phone_number is not None:
-        phone_number = str(phone_number)
-
-    if status is not None and status not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail="Invalid status")
-
-    photo_url = None
-    if photo and getattr(photo, "filename", None):
-        content = photo.file.read()
-        photo_url = save_file(content, photo.content_type or "application/octet-stream")
-
-    rec = update_dn_record(
-        db,
-        rec_id=id,
-        status=status,
-        remark=remark,
-        photo_url=photo_url,
-        updated_by=updated_by,
-        updated_by_set=updated_by_provided,
-        phone_number=phone_number,
-        phone_number_set=phone_number_provided,
-    )
-    if not rec:
-        raise HTTPException(status_code=404, detail="Record not found")
-
-    ensure_payload: dict[str, Any] = {
-        "status": rec.status,
-        "remark": rec.remark,
-        "photo_url": rec.photo_url,
-        "lng": rec.lng,
-        "lat": rec.lat,
-    }
-    if updated_by_provided:
-        ensure_payload["last_updated_by"] = rec.updated_by
-    if phone_number_provided:
-        ensure_payload["driver_contact_number"] = rec.phone_number
-
-    ensure_dn(db, rec.dn_number, **ensure_payload)
-    return {"ok": True, "id": rec.id}
 
 
 @router.delete("/update/{id}")

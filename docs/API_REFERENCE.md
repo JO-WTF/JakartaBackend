@@ -128,7 +128,7 @@ JakartaBackend 提供 RESTful API 用于物流配送单据 (DN) 管理和车辆�
 支持多条件筛选的 DN 列表查询。
 
 **查询参数**:
-- `dn_number` (string, 可选): DN 号码 (支持部分匹配)
+- `dn_number` (string[], 可选): DN 号码筛选 (支持多个，可使用重复参数或逗号分隔)
 - `status` (string[], 可选): 状态筛选 (可多选)
 - `status_delivery` (string[], 可选): 配送状态筛选 (可多选)
 - `lsp` (string[], 可选): 物流服务商筛选 (可多选)
@@ -173,6 +173,21 @@ GET /api/dn/list/search?status=POD&show_deleted=true&page_size=all
 
 # 标准查询（不含已删除）
 GET /api/dn/list/search?status=POD&page=1&page_size=20
+
+# 查询单个 DN 号码
+GET /api/dn/list/search?dn_number=JKT001-20241007
+
+# 查询多个 DN 号码（使用重复参数）
+GET /api/dn/list/search?dn_number=JKT001-20241007&dn_number=JKT002-20241007
+
+# 查询多个 DN 号码（使用逗号分隔）
+GET /api/dn/list/search?dn_number=JKT001-20241007,JKT002-20241007,JKT003-20241007
+
+# 组合多个 DN 号码与其他筛选条件
+GET /api/dn/list/search?dn_number=JKT001-20241007&dn_number=JKT002-20241007&status=Delivered&lsp=LSP-A
+
+# 混合重复参数和逗号分隔方式
+GET /api/dn/list/search?dn_number=JKT001-20241007,JKT002-20241007&dn_number=JKT003-20241007
 ```
 
 ---
@@ -682,13 +697,10 @@ Status: 404
     "region": ["Jakarta", "Bandung", "Surabaya"],
     "status": ["ON THE WAY", "ON SITE", "POD"],
     "status_delivery": ["On the way", "On Site", "POD"],
-    "status_deliver": ["On the way", "On Site", "POD"],
     "total": 150
   }
 }
 ```
-
-**说明**: `status_deliver` 字段为向后兼容保留
 
 ---
 

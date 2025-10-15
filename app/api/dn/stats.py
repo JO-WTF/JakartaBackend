@@ -31,13 +31,14 @@ from app.schemas.dn import (
 )
 from app.constants import STANDARD_STATUS_DELIVERY_VALUES
 from app.utils.time import TZ_GMT7
+from app.utils.logging import logger
 
 router = APIRouter(prefix="/api/dn")
 
 NO_STATUS_LABEL = "No Status"
 _BASE_STATUS_ORDER = list(STANDARD_STATUS_DELIVERY_VALUES) + [NO_STATUS_LABEL]
-_STATUS_LOOKUP = {status.lower(): status for status in STANDARD_STATUS_DELIVERY_VALUES}
-_STATUS_LOOKUP[NO_STATUS_LABEL.lower()] = NO_STATUS_LABEL
+_STATUS_DELIVERY_LOOKUP = {status_delivery.lower(): status_delivery for status_delivery in STANDARD_STATUS_DELIVERY_VALUES}
+_STATUS_DELIVERY_LOOKUP[NO_STATUS_LABEL.lower()] = NO_STATUS_LABEL
 
 
 def _canonicalize_status_delivery(value: Optional[str]) -> str:
@@ -46,7 +47,7 @@ def _canonicalize_status_delivery(value: Optional[str]) -> str:
     collapsed = " ".join(value.split())
     if not collapsed:
         return NO_STATUS_LABEL
-    canonical = _STATUS_LOOKUP.get(collapsed.lower())
+    canonical = _STATUS_DELIVERY_LOOKUP.get(collapsed.lower())
     if canonical:
         return canonical
     return collapsed
@@ -174,16 +175,16 @@ def get_dn_stats(date: str, db: Session = Depends(get_db)):
     )
 
     status_counts: dict[str, int] = {}
-    for status, count in raw_counts:
-        canonical_status = _canonicalize_status_delivery(status)
+    for status_delivery, count in raw_counts:
+        canonical_status = _canonicalize_status_delivery(status_delivery)
         status_counts[canonical_status] = status_counts.get(canonical_status, 0) + count
 
-    base_statuses = [status for status in _BASE_STATUS_ORDER if status]
-    extra_statuses = [status for status in status_counts if status not in base_statuses]
+    base_statuses = [status_delivery for status_delivery in _BASE_STATUS_ORDER if status_delivery]
+    extra_statuses = [status_delivery for status_delivery in status_counts if status_delivery not in base_statuses]
     extra_statuses.sort()
     final_statuses = base_statuses + extra_statuses
 
-    values = [status_counts.get(status, 0) for status in final_statuses]
+    values = [status_counts.get(status_delivery, 0) for status_delivery in final_statuses]
     total_count = sum(status_counts.values())
     values.append(total_count)
 
@@ -200,47 +201,7 @@ def get_dn_stats(date: str, db: Session = Depends(get_db)):
 def get_dn_filter_options(db: Session = Depends(get_db)):
     values, total = get_dn_unique_field_values(db)
     data: dict[str, Any] = {**values, "total": total}
-    if "status_delivery" in data:
-        data.setdefault("status_deliver", data["status_delivery"])  # 兼容字段
     return {"ok": True, "data": data}
-
-
-@router.get("/status-delivery/stats", response_model=StatusDeliveryStatsResponse)
-def get_dn_status_delivery_stats(
-    lsp: Optional[str] = Query(default=None),
-    plan_mos_date: Optional[str] = Query(default=None),
-    db: Session = Depends(get_db),
-):
-    normalized_lsp = lsp.strip() if lsp else None
-    normalized_plan_mos_date = (plan_mos_date.strip() if plan_mos_date else None) or datetime.now().strftime("%d %b %y")
-
-    stats = get_dn_status_delivery_counts(
-        db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
-    )
-    total = sum(count for _, count in stats)
-
-    data = [
-        StatusDeliveryCount(status_delivery=status, count=count)
-        for status, count in stats
-    ]
-
-    lsp_stats = get_dn_status_delivery_lsp_counts(
-        db, lsp=normalized_lsp, plan_mos_date=normalized_plan_mos_date
-    )
-    lsp_summary = [
-        StatusDeliveryLspSummary(
-            lsp=lsp_value,
-            total_dn=total_count,
-            status_not_empty=status_count,
-        )
-        for lsp_value, total_count, status_count in lsp_stats
-    ]
-
-    return StatusDeliveryStatsResponse(
-        data=data,
-        total=total,
-        lsp_summary=lsp_summary,
-    )
 
 
 @router.get(
@@ -286,7 +247,7 @@ def get_status_delivery_lsp_summary_records(
 
 
 @router.get(
-    "/status/by-driver",
+    "/status_delivery/by-driver",
     response_model=DriverStatsResponse,
 )
 def get_driver_statistics(
@@ -298,7 +259,7 @@ def get_driver_statistics(
     
     统计规则：
     - 仅统计 phone_number 非空的记录
-    - 一个 DN 下面，相同 status 的记录只计算一次
+    - 一个 DN 下面，相同 status_delivery 的记录只计算一次
     - 返回每个司机的唯一 DN 数量和去重后的记录数量
     """
     normalized_phone = phone_number.strip() if phone_number else None

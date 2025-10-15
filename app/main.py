@@ -20,7 +20,7 @@ from app.core.status_delivery_summary import (
 )
 from app.db import Base, engine, SessionLocal
 from app import models  # noqa: F401 - ensure models are imported for metadata creation
-from app.db_migrations import run_startup_migrations
+from app.db_migrations import run_startup_migrations, prepare_dn_table_migration
 from app.dn_columns import refresh_dynamic_columns
 from app.settings import settings
 from app.utils.logging import logger
@@ -40,6 +40,10 @@ if settings.storage_driver != "s3":
     app.mount("/uploads", StaticFiles(directory=settings.storage_disk_path, check_dir=False), name="uploads")
 
 Base.metadata.create_all(bind=engine)
+
+# Prepare DN table for migration (handle old schema)
+with SessionLocal() as db:
+    prepare_dn_table_migration(db)
 
 # Run startup migrations to ensure schema is up to date
 with SessionLocal() as db:

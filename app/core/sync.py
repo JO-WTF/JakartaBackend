@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -68,6 +69,9 @@ class DnSyncResult:
 def _values_match(existing_value: Any, new_value: Any) -> bool:
     if existing_value is None and new_value is None:
         return True
+    if isinstance(existing_value, str) and isinstance(new_value, int):
+        existing_value = existing_value.strip() or None
+        new_value = str(new_value).strip() or None
     if isinstance(existing_value, str):
         existing_value = existing_value.strip() or None
     if isinstance(new_value, str):
@@ -77,10 +81,10 @@ def _values_match(existing_value: Any, new_value: Any) -> bool:
 
 def _normalize_status_delivery_value(raw_value: str | None) -> str | None:
     """Normalize delivery status input to standard values.
-    
+
     Args:
         raw_value: The raw status delivery value to normalize
-        
+
     Returns:
         Normalized status delivery value or None if empty/invalid
         For non-string values, returns the value as-is
@@ -92,17 +96,17 @@ def _normalize_status_delivery_value(raw_value: str | None) -> str | None:
         return None
     if not isinstance(raw_value, str):
         return raw_value
-    
+
     # Trim and normalize whitespace
     trimmed = " ".join(raw_value.split())
     if not trimmed:
         return None
-    
+
     # Check if it's a standard value (case-insensitive)
     normalized = STATUS_DELIVERY_LOOKUP.get(trimmed.lower())
     if normalized:
         return normalized
-    
+
     # For non-standard values, return the normalized whitespace version
     return trimmed
 
@@ -163,18 +167,21 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         sheet_start = perf_counter()
         combined_df = process_all_sheets(sh)
         dn_sync_logger.debug("Fetched+combined sheet data in %.3fs", perf_counter() - sheet_start)
-        
-        # Deduplicate by dn_number, keeping the last occurrence
+        # Normalize dn_number before deduplication
         if not combined_df.empty and "dn_number" in combined_df.columns:
             original_rows = len(combined_df)
+            # Apply normalization to dn_number column
+            combined_df["dn_number"] = combined_df["dn_number"].apply(
+                lambda x: normalize_dn(str(x).strip()) if x is not None else ""
+            )
             combined_df = combined_df.drop_duplicates(subset=["dn_number"], keep="last")
             deduplicated_rows = len(combined_df)
             if original_rows != deduplicated_rows:
                 logger.info(
-                    "Deduplicated Google Sheets data: %d rows -> %d rows (removed %d duplicates)",
+                    "Deduplicated Google Sheets data after dn_number normalization: %d rows -> %d rows (removed %d duplicates)",
                     original_rows,
                     deduplicated_rows,
-                    original_rows - deduplicated_rows
+                    original_rows - deduplicated_rows,
                 )
     except Exception as exc:
         logger.exception("Failed to fetch DN sheet data: %s", exc)
@@ -209,9 +216,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
             dn_index = None
 
         plan_mos_index = sheet_columns.index("plan_mos_date") if "plan_mos_date" in sheet_columns else None
-        status_delivery_index = (
-            sheet_columns.index("status_delivery") if "status_delivery" in sheet_columns else None
-        )
+        status_delivery_index = sheet_columns.index("status_delivery") if "status_delivery" in sheet_columns else None
 
         # Track duplicate DN numbers for logging
         dn_occurrence_count: dict[str, int] = {}
@@ -248,9 +253,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 row_normalization_total += perf_counter() - row_normalization_start
 
                 if status_delivery_index is not None:
-                    normalized_status = _normalize_status_delivery_value(
-                        normalized_row[status_delivery_index]
-                    )
+                    normalized_status = _normalize_status_delivery_value(normalized_row[status_delivery_index])
                     normalized_row[status_delivery_index] = normalized_status
 
                 dn_normalization_start = perf_counter()
@@ -269,38 +272,38 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                 record_build_start = perf_counter()
                 normalized_row[dn_index] = normalized_number
                 cleaned = dict(zip(columns_tuple, normalized_row))
-                
+
                 # Track duplicate DN numbers
                 dn_occurrence_count[normalized_number] = dn_occurrence_count.get(normalized_number, 0) + 1
                 if dn_occurrence_count[normalized_number] > 1:
                     logger.warning(
                         "Duplicate DN %s found (occurrence #%d) - later rows will overwrite earlier ones",
                         normalized_number,
-                        dn_occurrence_count[normalized_number]
+                        dn_occurrence_count[normalized_number],
                     )
-                
+
                 # Log plan_mos_date processing for debugging
                 if plan_mos_index is not None and original_plan_mos_date is not None:
                     current_plan_mos_date = cleaned.get("plan_mos_date")
-                    logger.info(
+                    logger.debug(
                         "DN %s plan_mos_date processing: original='%s' -> normalized='%s'",
                         normalized_number,
                         original_plan_mos_date,
-                        current_plan_mos_date
+                        current_plan_mos_date,
                     )
-                
+
                 records.append(cleaned)
                 record_build_total += perf_counter() - record_build_start
                 rows_persisted += 1
                 dn_numbers.add(normalized_number)
-                
+
         # Log duplicate DN statistics
         duplicate_dns = {dn: count for dn, count in dn_occurrence_count.items() if count > 1}
         if duplicate_dns:
             logger.warning(
                 "Found %d duplicate DN numbers in Google Sheets: %s",
                 len(duplicate_dns),
-                dict(list(duplicate_dns.items())[:5])  # Show first 5 duplicates
+                dict(list(duplicate_dns.items())[:5]),  # Show first 5 duplicates
             )
     else:
         dn_sync_logger.info("Combined DataFrame is empty; no rows to process")
@@ -324,7 +327,6 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
     numbers_unchanged: set[str] = set()
 
     assignable_filter_total = 0.0
-    non_null_filter_total = 0.0
     change_detection_total = 0.0
     payload_mutation_total = 0.0
     latest_merge_total = 0.0
@@ -340,10 +342,13 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         existing_dn = existing_dn_map.get(number)
         if latest:
             merge_start = perf_counter()
+
+            # Update sheet_fields: use chosen status and other values from latest
             sheet_fields.update(
                 {
-                    "status": latest.status,
-                    "remark": latest.remark,
+                    "status_delivery": _normalize_status_delivery_value(entry.get("status_delivery")),
+                    "status_site": entry.get("status_site"),
+                    "remark": entry.get("remark"),
                     "photo_url": latest.photo_url,
                     "lng": latest.lng,
                     "lat": latest.lat,
@@ -357,27 +362,28 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         assignable_fields = {k: v for k, v in sheet_fields.items() if k in mutable_columns}
         assignable_filter_total += perf_counter() - assignable_start
 
-        non_null_start = perf_counter()
-        non_null_fields = {key: value for key, value in assignable_fields.items() if value is not None}
-        non_null_filter_total += perf_counter() - non_null_start
-        if not non_null_fields:
-            continue
-
         comparison_start = perf_counter()
         if existing_dn:
             changed_fields: dict[str, Any] = {}
-            for key, value in non_null_fields.items():
+            for key, value in assignable_fields.items():
                 # Protect driver_contact_number from being overwritten if DN has been updated
                 if key == "driver_contact_number" and (existing_dn.update_count or 0) > 0:
                     # Skip this field - don't allow Google Sheet to overwrite it
                     dn_sync_logger.debug(
                         "Skipping driver_contact_number update for DN %s (update_count=%d > 0)",
                         number,
-                        existing_dn.update_count
+                        existing_dn.update_count,
                     )
                     continue
                 if not _values_match(getattr(existing_dn, key, None), value):
+                    if key == "status_delivery":
+                        if getattr(existing_dn, key, None) == "No Status" and value is None:
+                            continue
                     changed_fields[key] = value
+                    dn_sync_logger.info("Field '%s' changed for DN %s: %s -> %s",
+                                        key, number, getattr(existing_dn, key, None), value)
+            if changed_fields:
+                logger.info("changed_fields: %s", json.dumps(changed_fields))
             change_detection_total += perf_counter() - comparison_start
             if not changed_fields:
                 numbers_unchanged.add(number)
@@ -394,12 +400,12 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         else:
             change_detection_total += perf_counter() - comparison_start
             numbers_to_create.add(number)
-            created_columns.update(non_null_fields.keys())
+            created_columns.update(assignable_fields.keys())
             payload = create_payload_by_number.setdefault(number, {"dn_number": number})
             mutation_start = perf_counter()
-            payload.update(non_null_fields)
+            payload.update(assignable_fields)
             payload_mutation_total += perf_counter() - mutation_start
-            created_field_total += len(non_null_fields)
+            created_field_total += len(assignable_fields)
 
     processing_duration = perf_counter() - processing_start
     total_payloads = len(create_payload_by_number) + len(update_payload_by_number)
@@ -464,8 +470,8 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
     else:
         missing_q = db.query(DN)
 
-    mark_deleted_count = (
-        missing_q.filter(func.coalesce(DN.is_deleted, "N") != "Y").update({DN.is_deleted: "Y"}, synchronize_session=False)
+    mark_deleted_count = missing_q.filter(func.coalesce(DN.is_deleted, "N") != "Y").update(
+        {DN.is_deleted: "Y"}, synchronize_session=False
     )
 
     if reset_active_count or mark_deleted_count:
@@ -528,9 +534,13 @@ def sync_dn_sheet_with_new_session() -> DnSyncResult:
         else:
             synced_numbers = result.synced_numbers
             message = (
-                "Synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)"
-                % (len(synced_numbers), result.created_count, result.updated_count, result.ignored_count)
-            ) if synced_numbers else "Google Sheet returned no DN rows to sync"
+                (
+                    "Sync Completed: synced %d DN numbers from Google Sheet (created=%d, updated=%d, ignored=%d)"
+                    % (len(synced_numbers), result.created_count, result.updated_count, result.ignored_count)
+                )
+                if synced_numbers
+                else "Google Sheet returned no DN rows to sync"
+            )
             create_dn_sync_log(db, status="success", synced_numbers=synced_numbers, message=message)
             return result
     finally:

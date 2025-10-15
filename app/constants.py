@@ -32,6 +32,8 @@ VALID_STATUSES: tuple[str, ...] = (
     "NO STATUS",
     "NEW MOS",
     "ARRIVED AT WH",
+    "DEPARTED FROM WH",
+    "DEPARTED FROM XD/PM",
     "TRANSPORTING FROM WH",
     "ARRIVED AT XD/PM",
     "TRANSPORTING FROM XD/PM",
@@ -50,26 +52,26 @@ VEHICLE_VALID_STATUSES: tuple[str, ...] = ("arrived", "departed")
 
 # Standard status_delivery values for normalization
 STANDARD_STATUS_DELIVERY_VALUES: tuple[str, ...] = (
-    "Prepare Vehicle",
-    "On the way",
-    "On Site",
+    "ARRIVED AT WH",
+    "DEPARTED FROM WH",
+    "ARRIVED AT XD/PM",
+    "DEPARTED FROM XD/PM",
+    "ARRIVED AT SITE",
     "POD",
-    "Waiting PIC Feedback",
-    "RePlan MOS due to LSP Delay",
-    "RePlan MOS Project",
-    "Cancel MOS",
-    "Close by RN",
 )
 
 # Lookup table for normalizing status_delivery values
 STATUS_DELIVERY_LOOKUP: dict[str, str] = {
     canonical.lower(): canonical for canonical in STANDARD_STATUS_DELIVERY_VALUES
 }
-STATUS_DELIVERY_LOOKUP.update({
-    "close by rn": "Close by RN",
-    "no status": "No Status",
-    "on the way": "On the way",  # Ensure consistent capitalization
-})
+# Additional synonyms for status_delivery. Keys are lower-cased to match lookup usage
+STATUS_DELIVERY_LOOKUP.update(
+    {k.lower(): v for k, v in {
+        "Arrive at Warehouse": "ARRIVED AT WH",
+        "TRANSPORTING FROM WH": "DEPARTED FROM WH",
+        "TRANSPORTING FROM XD/PM": "DEPARTED FROM XD/PM",
+    }.items()}
+)
 
 # Statuses that trigger arrival timestamp (write to column S)
 ARRIVAL_STATUSES: frozenset[str] = frozenset({
@@ -78,7 +80,11 @@ ARRIVAL_STATUSES: frozenset[str] = frozenset({
 })
 
 # Statuses that trigger departure timestamp (write to column R)
-DEPARTURE_STATUSES: frozenset[str] = frozenset({
-    "TRANSPORTING FROM WH",
-    "TRANSPORTING FROM XD/PM",
-})
+DEPARTURE_STATUSES: frozenset[str] = frozenset(
+    {
+        "TRANSPORTING FROM WH",
+        "TRANSPORTING FROM XD/PM",
+        "DEPARTED FROM WH",
+        "DEPARTED FROM XD/PM",
+    }
+)

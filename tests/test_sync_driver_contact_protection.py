@@ -1,7 +1,9 @@
 """Test that driver_contact_number is protected from Google Sheet updates when update_count > 0."""
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from app.db import Base
 from app.crud import ensure_dn, add_dn_record
 from app.core.sync import sync_dn_sheet_to_db
 from unittest.mock import patch, MagicMock
@@ -10,27 +12,24 @@ import pandas as pd
 
 @pytest.fixture
 def db_session():
-    """Create a test database session."""
-    from app.db import SessionLocal, engine, Base
-    from app.models import DN, DNRecord
+    """Create a test database session with in-memory SQLite."""
+    # Use in-memory SQLite database for testing
+    # connect_args={"check_same_thread": False} allows SQLite to be used across threads
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        future=True
+    )
+    Base.metadata.create_all(engine)
+    TestingSessionLocal = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, future=True
+    )
     
-    # Create tables
-    Base.metadata.create_all(bind=engine)
-    
-    db = SessionLocal()
+    session = TestingSessionLocal()
     try:
-        # Clean up any existing test data
-        db.query(DNRecord).filter(DNRecord.dn_number.in_(["DN001", "DN002", "DN003"])).delete(synchronize_session=False)
-        db.query(DN).filter(DN.dn_number.in_(["DN001", "DN002", "DN003"])).delete(synchronize_session=False)
-        db.commit()
-        yield db
+        yield session
     finally:
-        # Clean up after test
-        db.rollback()
-        db.query(DNRecord).filter(DNRecord.dn_number.in_(["DN001", "DN002", "DN003"])).delete(synchronize_session=False)
-        db.query(DN).filter(DN.dn_number.in_(["DN001", "DN002", "DN003"])).delete(synchronize_session=False)
-        db.commit()
-        db.close()
+        session.close()
 
 
 def test_driver_contact_number_protection_with_update_count(db_session: Session):
