@@ -871,7 +871,12 @@ def get_dn_status_delivery_lsp_counts(
     status_site_normalized = func.lower(func.coalesce(func.trim(DN.status_site), ""))
     status_site_matches = status_site_normalized != "pic not confirmed"
     status_delivery_trimmed = func.trim(DN.status_delivery)
-    status_delivery_present = func.coalesce(status_delivery_trimmed, "") != ""
+    # Consider status_delivery present only if it's non-empty and not the sentinel "No Status" (case-insensitive)
+    status_delivery_present = and_(
+        DN.status_delivery.isnot(None),
+        func.length(status_delivery_trimmed) > 0,
+        func.lower(status_delivery_trimmed) != "no status",
+    )
 
     total_case = case((status_site_matches, 1), else_=0)
     status_not_empty_case = case((and_(status_site_matches, status_delivery_present), 1), else_=0)
