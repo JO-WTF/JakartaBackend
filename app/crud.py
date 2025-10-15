@@ -680,6 +680,7 @@ def search_dn_list(
             and_(
                 DN.status_delivery.isnot(None),
                 func.length(func.trim(DN.status_delivery)) > 0,
+                func.lower(func.trim(DN.status_delivery)) != "no status",
             )
         )
     elif status_delivery_not_empty is False:
@@ -687,6 +688,7 @@ def search_dn_list(
             or_(
                 DN.status_delivery.is_(None),
                 func.length(func.trim(DN.status_delivery)) == 0,
+                func.lower(func.trim(DN.status_delivery)) != "no status",
             )
         )
 
