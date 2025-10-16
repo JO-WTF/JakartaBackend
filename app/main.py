@@ -89,13 +89,13 @@ async def _start_scheduler() -> None:
         coalesce=True,
     )
     # Schedule daily archive at 04:00 Jakarta time (GMT+7)
-    _scheduler.add_job(
-        scheduled_archive,
-        trigger=CronTrigger(hour=4, minute=0, timezone=TZ_GMT7),
-        id="scheduled_archive",
-        max_instances=1,
-        coalesce=True,
-    )
+    # _scheduler.add_job(
+    #     scheduled_archive,
+    #     trigger=CronTrigger(hour=4, minute=0, timezone=TZ_GMT7),
+    #     id="scheduled_archive",
+    #     max_instances=1,
+    #     coalesce=True,
+    # )
     _scheduler.start()
 
 
