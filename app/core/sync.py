@@ -35,7 +35,7 @@ from app.dn_columns import get_mutable_dn_columns
 from app.models import DN, Vehicle
 from app.utils.logging import dn_sync_logger, logger
 from app.utils.string import normalize_dn
-from app.utils.time import to_gmt7_iso
+from app.utils.time import to_gmt7_iso, TZ_GMT7
 
 __all__ = [
     # Re-exported constants for backward compatibility
@@ -53,6 +53,7 @@ __all__ = [
     "normalize_database_fields",
     "serialize_vehicle",
     "_normalize_status_delivery_value",
+    "is_in_maintenance_window",
 ]
 
 
@@ -581,6 +582,28 @@ async def run_dn_sheet_sync_once() -> DnSyncResult:
 
 async def scheduled_dn_sheet_sync() -> None:
     try:
+        # Block scheduled sync during daily maintenance window (03:58 - 04:02 GMT+7)
+        if is_in_maintenance_window():
+            now_local = datetime.now(TZ_GMT7)
+            dn_sync_logger.info("Scheduled sync skipped due to maintenance window: %s", now_local.isoformat())
+            # Record skipped sync in DB for observability
+            try:
+                db = SessionLocal()
+                create_dn_sync_log(
+                    db,
+                    status="skipped",
+                    synced_numbers=None,
+                    message="Scheduled sync skipped due to maintenance window (03:58-04:02 GMT+7)",
+                )
+            except Exception:
+                dn_sync_logger.exception("Failed to record skipped sync log")
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            return
+
         result = await run_dn_sheet_sync_once()
         if result.synced_numbers:
             logger.info(
@@ -592,6 +615,23 @@ async def scheduled_dn_sheet_sync() -> None:
             )
     except Exception:
         logger.exception("Scheduled DN sheet sync failed")
+
+
+def is_in_maintenance_window() -> bool:
+    """Return True when current local time (GMT+7) falls in 03:58-04:02 (inclusive start, exclusive end).
+
+    This helper is intentionally simple: it compares today's times in GMT+7. It is safe to call
+    from scheduled tasks and archive triggers to avoid running sync during that window.
+    """
+    try:
+        now = datetime.now(TZ_GMT7)
+        start = now.replace(hour=3, minute=58, second=0, microsecond=0)
+        end = now.replace(hour=4, minute=2, second=0, microsecond=0)
+        return start <= now < end
+    except Exception:
+        # Fail-open: if something unexpected happens, do not block sync
+        dn_sync_logger.exception("Failed to evaluate maintenance window check; allowing sync to proceed")
+        return False
 
 
 def serialize_vehicle(vehicle: Vehicle) -> dict[str, Any]:

@@ -18,6 +18,8 @@ from app.core.sync import scheduled_dn_sheet_sync
 from app.core.status_delivery_summary import (
     scheduled_status_delivery_lsp_summary_capture,
 )
+from app.api.dn.archive import scheduled_archive
+from app.utils.time import TZ_GMT7
 from app.db import Base, engine, SessionLocal
 from app import models  # noqa: F401 - ensure models are imported for metadata creation
 from app.db_migrations import run_startup_migrations, prepare_dn_table_migration
@@ -83,6 +85,14 @@ async def _start_scheduler() -> None:
         scheduled_status_delivery_lsp_summary_capture,
         trigger=CronTrigger(minute=0),
         id=_LSP_SUMMARY_JOB_ID,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Schedule daily archive at 04:00 Jakarta time (GMT+7)
+    _scheduler.add_job(
+        scheduled_archive,
+        trigger=CronTrigger(hour=4, minute=0, timezone=TZ_GMT7),
+        id="scheduled_archive",
         max_instances=1,
         coalesce=True,
     )
