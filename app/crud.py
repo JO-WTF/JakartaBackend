@@ -818,6 +818,7 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
         "status_wh": DN.status_wh,
         "status_delivery": DN.status_delivery,
         "status_site": DN.status_site,
+        "project_request": DN.project_request,
     }
 
     distinct_values: Dict[str, List[str]] = {}
