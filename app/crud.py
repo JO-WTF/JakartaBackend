@@ -649,7 +649,7 @@ def search_dn_list(
     area: Sequence[str] | None = None,
     status_wh_values: Sequence[str] | None = None,
     subcon_values: Sequence[str] | None = None,
-    project_request: str | None = None,
+    project_request: Sequence[str] | None = None,
     last_modified_from: datetime | None = None,
     last_modified_to: datetime | None = None,
     show_deleted: bool = False,
@@ -782,8 +782,11 @@ def search_dn_list(
     ]
     if trimmed_subcon_values:
         conds.append(func.trim(DN.subcon).in_(trimmed_subcon_values))
-    if project_request:
-        conds.append(DN.project_request == project_request)
+    trimmed_project_requests = [
+        value.strip() for value in (project_request or []) if isinstance(value, str) and value.strip()
+    ]
+    if trimmed_project_requests:
+        conds.append(func.trim(DN.project_request).in_(trimmed_project_requests))
 
     if last_modified_from is not None:
         conds.append(last_modified_expr >= last_modified_from)
