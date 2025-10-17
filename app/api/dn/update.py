@@ -41,6 +41,7 @@ def _current_timestamp_gmt7() -> str:
 @router.post("/update")
 def update_dn(
     dnNumber: str = Form(...),
+    status: str | None = Form(None, description="legacy 状态字段，可选"),
     status_delivery: str | None = Form(None, description="配送状态，可选"),
     status_site: str | None = Form(None, description="站点状态，可选"),
     remark: str | None = Form(None),
@@ -70,6 +71,10 @@ def update_dn(
     phone_number_value = None
     if isinstance(phone_number, str):
         phone_number_value = phone_number.strip() or None
+
+    # legacy 兼容：如果 status_delivery 为空但有 status，则用 status 作为 status_delivery
+    if (not status_delivery or status_delivery.strip() == "") and status:
+        status_delivery = status
 
     existing_dn = db.query(DN).filter(DN.dn_number == dn_number).filter(_ACTIVE_DN_EXPR).one_or_none()
     gs_sheet_name = existing_dn.gs_sheet if existing_dn is not None else None
