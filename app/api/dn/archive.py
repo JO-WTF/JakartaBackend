@@ -234,3 +234,11 @@ def archive_plan_mos():
     except Exception as exc:
         dn_sync_logger.exception("archive_plan_mos failed: %s", exc)
         return {"error": str(exc)}
+
+
+def scheduled_archive():
+    """定时归档入口，可被 main.py 导入。"""
+    dn_sync_logger.info("[定时任务] 归档任务启动……")
+    result = archive_plan_mos()
+    dn_sync_logger.info(f"[定时任务] 归档结果: {result}")
+    return result
