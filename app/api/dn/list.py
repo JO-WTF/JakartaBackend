@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.crud import get_latest_dn_records_map, list_all_dn_records, list_dn_by_dn_numbers, search_dn_list
+from app.crud import get_latest_dn_records_map, list_all_dn_records, list_dn_by_dn_numbers, list_dn_by_du_ids, search_dn_list
 from app.db import get_db
 from app.dn_columns import get_sheet_columns
 from app.models import DN
@@ -55,6 +55,13 @@ def _collect_query_values(*values: Any) -> list[str] | None:
             _add_candidate(candidate)
 
     return normalized or None
+
+
+def _normalize_batch_du_ids(values: Optional[List[str]] | None) -> list[str]:
+    du_ids = _collect_query_values(values)
+    if not du_ids:
+        raise HTTPException(status_code=400, detail="Missing du_id")
+    return du_ids
 
 
 @router.get("/list")
@@ -317,6 +324,53 @@ def batch_search_dn_list(
     dn_numbers = normalize_batch_dn_numbers(dn_number)
 
     total, items = list_dn_by_dn_numbers(db, dn_numbers, page=page, page_size=page_size)
+
+    if not items:
+        return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": []}
+
+    latest_records = get_latest_dn_records_map(db, [it.dn_number for it in items])
+    sheet_columns = get_sheet_columns()
+
+    data: list[dict[str, Any]] = []
+    for it in items:
+        row: dict[str, Any] = {
+            "id": it.id,
+            "dn_number": it.dn_number,
+            "created_at": to_gmt7_iso(it.created_at),
+            "status_delivery": getattr(it, "status_delivery", None),
+            "status_site": getattr(it, "status_site", None),
+            "remark": it.remark,
+            "photo_url": it.photo_url,
+            "lng": it.lng,
+            "lat": it.lat,
+            "last_updated_by": it.last_updated_by,
+            "gs_sheet": it.gs_sheet,
+            "gs_row": it.gs_row,
+            "gs_cell_url": make_gs_cell_url(getattr(it, "gs_sheet", None), getattr(it, "gs_row", None)),
+            "is_deleted": it.is_deleted,
+            "update_count": it.update_count,
+        }
+        for column in sheet_columns:
+            if column == "dn_number":
+                continue
+            row[column] = getattr(it, column)
+        latest = latest_records.get(it.dn_number)
+        row["latest_record_created_at"] = to_gmt7_iso(latest.created_at if latest else None)
+        data.append(row)
+
+    return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": data}
+
+
+@router.get("/list/batch-by-du")
+def batch_search_dn_list_by_du(
+    du_id: Optional[List[str]] = Query(None, description="重复 du_id 或逗号分隔"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    du_ids = _normalize_batch_du_ids(du_id)
+
+    total, items = list_dn_by_du_ids(db, du_ids, page=page, page_size=page_size)
 
     if not items:
         return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": []}

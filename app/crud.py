@@ -433,6 +433,43 @@ def list_dn_by_dn_numbers(
     return total, items
 
 
+def list_dn_by_du_ids(
+    db: Session,
+    du_ids: Iterable[str],
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> Tuple[int, List[DN]]:
+    identifiers = [value for value in dict.fromkeys(du_ids) if value]
+    if not identifiers:
+        return 0, []
+
+    latest_record_subq = (
+        db.query(
+            DNRecord.dn_number.label("dn_number"),
+            func.max(DNRecord.created_at).label("latest_record_created_at"),
+        )
+        .group_by(DNRecord.dn_number)
+        .subquery()
+    )
+
+    base_q = (
+        db.query(DN)
+        .outerjoin(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
+        .filter(DN.du_id.in_(identifiers))
+        .filter(_ACTIVE_DN_EXPR)
+    )
+
+    total = base_q.count()
+
+    latest_record_expr = func.coalesce(latest_record_subq.c.latest_record_created_at, DN.created_at)
+
+    items = (
+        base_q.order_by(latest_record_expr.desc(), DN.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    )
+    return total, items
+
+
 # PM / PMInventory helpers
 
 
