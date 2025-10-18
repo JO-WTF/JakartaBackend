@@ -43,7 +43,8 @@ SHEET_BASE_COLUMNS: List[str] = [
     "issue_remark",
     "region",
     "plan_mos_date",
-    "food_type",
+    "subcon_status",
+    "mos_type",
 ]
 
 # Cache of dynamically added DN columns (in table order).

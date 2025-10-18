@@ -19,39 +19,31 @@ DN_SYNC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 _dn_sync_file_handler: logging.FileHandler | None = None
 
 
-class _DnSyncLogFilter(logging.Filter):
-    """Filter to keep only DN sync logs."""
-
-    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
-        return bool(getattr(record, "dn_sync", False))
-
-
-def _configure_dn_sync_logger(base_logger: logging.Logger) -> logging.LoggerAdapter:
+def _configure_dn_sync_logger() -> logging.Logger:
     global _dn_sync_file_handler
 
-    if base_logger.getEffectiveLevel() > logging.INFO:
-        base_logger.setLevel(logging.INFO)
+    dn_logger = logging.getLogger("dn_sync")
+    dn_logger.setLevel(logging.INFO)
+    dn_logger.propagate = False
 
-    if not any(getattr(handler, "dn_sync_console", False) for handler in base_logger.handlers):
+    if not any(getattr(handler, "dn_sync_console", False) for handler in dn_logger.handlers):
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-        console_handler.addFilter(_DnSyncLogFilter())
         console_handler.dn_sync_console = True  # type: ignore[attr-defined]
-        base_logger.addHandler(console_handler)
+        dn_logger.addHandler(console_handler)
 
     if _dn_sync_file_handler is None or getattr(_dn_sync_file_handler, "baseFilename", None) != str(DN_SYNC_LOG_PATH):
         handler = logging.FileHandler(DN_SYNC_LOG_PATH, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         handler.setLevel(logging.DEBUG)
-        handler.addFilter(_DnSyncLogFilter())
-        base_logger.addHandler(handler)
+        dn_logger.addHandler(handler)
         _dn_sync_file_handler = handler
 
-    return logging.LoggerAdapter(base_logger, {"dn_sync": True})
+    return dn_logger
 
 
-dn_sync_logger = _configure_dn_sync_logger(logger)
+dn_sync_logger = _configure_dn_sync_logger()
 
 # Ensure storage path exists when using disk storage to avoid runtime surprises.
 if settings.storage_driver != "s3":

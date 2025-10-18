@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import traceback
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from time import perf_counter
-from typing import Any, List
+from typing import Any, List, Mapping, Tuple
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
@@ -67,17 +68,54 @@ class DnSyncResult:
     ignored_count: int
 
 
+def _coerce_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        try:
+            return Decimal(trimmed)
+        except InvalidOperation:
+            return None
+    return None
+
+
 def _values_match(existing_value: Any, new_value: Any) -> bool:
     if existing_value is None and new_value is None:
         return True
-    if isinstance(existing_value, str) and isinstance(new_value, int):
-        existing_value = existing_value.strip() or None
-        new_value = str(new_value).strip() or None
     if isinstance(existing_value, str):
         existing_value = existing_value.strip() or None
     if isinstance(new_value, str):
         new_value = new_value.strip() or None
+    numeric_compare_allowed = isinstance(existing_value, (int, float)) or isinstance(new_value, (int, float))
+    if numeric_compare_allowed:
+        numeric_existing = _coerce_decimal(existing_value)
+        numeric_new = _coerce_decimal(new_value)
+        if numeric_existing is not None and numeric_new is not None:
+            return numeric_existing == numeric_new
     return existing_value == new_value
+
+
+def _format_diff_entries(entries: Mapping[str, Tuple[Any, Any]]) -> str:
+    if not entries:
+        return "{}"
+    parts = []
+    for key in sorted(entries):
+        old_value, new_value = entries[key]
+        parts.append(f"{key}: {old_value!r} -> {new_value!r}")
+    return ", ".join(parts)
+
+
+def _log_sheet_diff(action: str, dn_number: str, entries: Mapping[str, Tuple[Any, Any]]) -> None:
+    formatted = _format_diff_entries(entries)
+    dn_sync_logger.info("sheet_diff action=%s dn=%s changes=%s", action, dn_number, formatted)
 
 
 def _normalize_status_delivery_value(raw_value: str | None) -> str | None:
@@ -366,6 +404,7 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
         comparison_start = perf_counter()
         if existing_dn:
             changed_fields: dict[str, Any] = {}
+            field_diffs: dict[str, Tuple[Any, Any]] = {}
             for key, value in assignable_fields.items():
                 # Protect driver_contact_number from being overwritten if DN has been updated
                 if key == "driver_contact_number" and (existing_dn.update_count or 0) > 0:
@@ -394,7 +433,8 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                     if issue_remark is not None and isinstance(issue_remark, str) and issue_remark.strip() and existing_empty:
                         if not _values_match(existing_remark, issue_remark):
                             changed_fields[key] = issue_remark
-                            dn_sync_logger.info(
+                            field_diffs[key] = (existing_remark, issue_remark)
+                            dn_sync_logger.debug(
                                 "Field '%s' changed for DN %s: %s -> %s",
                                 key,
                                 number,
@@ -408,11 +448,18 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
                     if key == "status_delivery":
                         if getattr(existing_dn, key, None) == "No Status" and value is None:
                             continue
+                    current_value = getattr(existing_dn, key, None)
                     changed_fields[key] = value
-                    dn_sync_logger.info("Field '%s' changed for DN %s: %s -> %s",
-                                        key, number, getattr(existing_dn, key, None), value)
+                    field_diffs[key] = (current_value, value)
+                    dn_sync_logger.debug(
+                        "Field '%s' changed for DN %s: %s -> %s",
+                        key,
+                        number,
+                        current_value,
+                        value,
+                    )
             if changed_fields:
-                logger.info("changed_fields: %s", json.dumps(changed_fields))
+                _log_sheet_diff("update", number, field_diffs)
             change_detection_total += perf_counter() - comparison_start
             if not changed_fields:
                 numbers_unchanged.add(number)
@@ -435,6 +482,9 @@ def sync_dn_sheet_to_db(db: Session) -> DnSyncResult:
             payload.update(assignable_fields)
             payload_mutation_total += perf_counter() - mutation_start
             created_field_total += len(assignable_fields)
+            if assignable_fields:
+                create_diffs = {k: (None, v) for k, v in assignable_fields.items()}
+                _log_sheet_diff("create", number, create_diffs)
 
     processing_duration = perf_counter() - processing_start
     total_payloads = len(create_payload_by_number) + len(update_payload_by_number)

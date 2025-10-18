@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, List
 import json
 from datetime import datetime
 from app.utils.logging import logger
@@ -38,6 +38,10 @@ def _current_timestamp_gmt7() -> str:
     return f"{now.month}/{now.day}/{now.year} {now.hour}:{now.minute:02d}:{now.second:02d}"
 
 
+def _format_log_entries(entries: dict[str, Any]) -> str:
+    return "; ".join(f"{key} = {value!r}" for key, value in entries.items()) + ";"
+
+
 @router.post("/update")
 def update_dn(
     dnNumber: str = Form(...),
@@ -55,6 +59,43 @@ def update_dn(
     dn_number = normalize_dn(dnNumber)
     if not DN_RE.fullmatch(dn_number):
         raise HTTPException(status_code=400, detail="Invalid DN number")
+
+    photo_metadata: dict[str, Any] | None = None
+    if photo is not None:
+        photo_metadata = {
+            "filename": getattr(photo, "filename", None),
+            "content_type": getattr(photo, "content_type", None),
+            "has_content": bool(photo.filename),
+        }
+
+    payload_entries: list[tuple[str, Any]] = []
+
+    def append_if_present(key: str, value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            if value.strip() == "":
+                return
+        payload_entries.append((key, value))
+
+    append_if_present("dn_number.raw", dnNumber)
+    append_if_present("dn_number.normalized", dn_number)
+    append_if_present("status", status)
+    append_if_present("status_delivery", status_delivery)
+    append_if_present("status_site", status_site)
+    append_if_present("remark", remark)
+    append_if_present("lng", lng)
+    append_if_present("lat", lat)
+    append_if_present("updated_by", updated_by)
+    append_if_present("phone_number", phone_number)
+
+    if photo_metadata:
+        for key, value in photo_metadata.items():
+            append_if_present(f"photo.{key}", value)
+
+    if payload_entries:
+        formatted_payload = "; ".join(f"{key} = {value!r}" for key, value in payload_entries) + ";"
+        logger.info("Received DN update payload: %s", formatted_payload)
 
     photo_url = None
     if photo and photo.filename:
@@ -236,9 +277,10 @@ def batch_update_dn(
 
 @router.delete("/update/{id}")
 def remove_dn_record(id: int, db: Session = Depends(get_db)):
-    ok = delete_dn_record(db, id)
-    if not ok:
+    deleted_record = delete_dn_record(db, id)
+    if deleted_record is None:
         raise HTTPException(status_code=404, detail="Record not found")
+    logger.info("Deleted DN record: %s", _format_log_entries(deleted_record))
     return {"ok": True}
 
 
@@ -248,7 +290,11 @@ def remove_dn(dn_number: str, db: Session = Depends(get_db)):
     if not DN_RE.fullmatch(normalized_number):
         raise HTTPException(status_code=400, detail="Invalid DN number")
 
-    ok = delete_dn(db, normalized_number)
-    if not ok:
+    deleted = delete_dn(db, normalized_number)
+    if deleted is None:
         raise HTTPException(status_code=404, detail="DN not found")
+    logger.info("Deleted DN: %s", _format_log_entries(deleted["dn"]))
+    if deleted["records"]:
+        for record in deleted["records"]:
+            logger.info("Deleted DN related record: %s", _format_log_entries(record))
     return {"ok": True}

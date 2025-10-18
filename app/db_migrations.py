@@ -2,8 +2,17 @@
 
 from sqlalchemy import text, inspect, Table
 from sqlalchemy.orm import Session
+
 from app.utils.logging import logger
 from app.models import Base
+
+
+def log_migration_action(table: str, action: str, details: str | None = None) -> None:
+    """Emit a structured log describing a concrete database change."""
+    if details:
+        logger.info("Migration action | table=%s | action=%s | %s", table, action, details)
+    else:
+        logger.info("Migration action | table=%s | action=%s", table, action)
 
 
 def get_missing_columns(db: Session, table_name: str, model_table: Table) -> list[tuple[str, str]]:
@@ -85,10 +94,12 @@ def ensure_table_schema(db: Session, table_name: str, model_table: Table) -> Non
         if not missing_columns:
             logger.debug("Table %s schema is up to date", table_name)
             return
+
+        formatted_missing = ", ".join(f"{col} -> {definition}" for col, definition in missing_columns)
+        log_migration_action(table_name, "detected_missing_columns", formatted_missing)
         
         # Add missing columns
         for col_name, col_definition in missing_columns:
-            logger.info("Adding column %s to table %s", col_name, table_name)
             try:
                 # For NOT NULL columns with defaults, use a two-step approach to ensure compatibility
                 if " NOT NULL" in col_definition and " DEFAULT " in col_definition:
@@ -97,31 +108,41 @@ def ensure_table_schema(db: Session, table_name: str, model_table: Table) -> Non
                     col_definition_nullable = col_definition.replace(" NOT NULL", "").replace(f" DEFAULT {default_part}", "")
                     
                     # Step 1: Add column as nullable with default
-                    db.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN {col_definition_nullable} DEFAULT {default_part}'))
-                    logger.info("Added nullable column %s with default value", col_name)
+                    sql_add_nullable = f'ALTER TABLE "{table_name}" ADD COLUMN {col_definition_nullable} DEFAULT {default_part}'
+                    log_migration_action(table_name, "add_column_with_default_nullable", sql_add_nullable)
+                    db.execute(text(sql_add_nullable))
                     
                     # Step 2: Update any NULL values (shouldn't be any with DEFAULT, but be safe)
-                    update_result = db.execute(text(
-                        f'UPDATE "{table_name}" SET "{col_name}" = {default_part} WHERE "{col_name}" IS NULL'
-                    ))
+                    sql_backfill = f'UPDATE "{table_name}" SET "{col_name}" = {default_part} WHERE "{col_name}" IS NULL'
+                    log_migration_action(table_name, "backfill_null_values", sql_backfill)
+                    update_result = db.execute(text(sql_backfill))
                     if update_result.rowcount > 0:
-                        logger.info("Updated %d existing rows with default value for %s", update_result.rowcount, col_name)
+                        log_migration_action(
+                            table_name,
+                            "backfill_null_values_result",
+                            f"column={col_name}, rows_updated={update_result.rowcount}, default={default_part}",
+                        )
                     
                     # Step 3: Make column NOT NULL
-                    db.execute(text(f'ALTER TABLE "{table_name}" ALTER COLUMN "{col_name}" SET NOT NULL'))
-                    logger.info("Set column %s to NOT NULL", col_name)
+                    sql_set_not_null = f'ALTER TABLE "{table_name}" ALTER COLUMN "{col_name}" SET NOT NULL'
+                    log_migration_action(table_name, "set_not_null", sql_set_not_null)
+                    db.execute(text(sql_set_not_null))
                 else:
                     # For other columns, add directly
-                    db.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN {col_definition}'))
-                
-                logger.info("Successfully added column %s to table %s", col_name, table_name)
+                    sql_add_column = f'ALTER TABLE "{table_name}" ADD COLUMN {col_definition}'
+                    log_migration_action(table_name, "add_column", sql_add_column)
+                    db.execute(text(sql_add_column))
             except Exception as e:
                 logger.error("Failed to add column %s to table %s: %s", col_name, table_name, e)
                 raise
         
         if missing_columns:
             db.commit()
-            logger.info("Updated schema for table %s: added %d columns", table_name, len(missing_columns))
+            log_migration_action(
+                table_name,
+                "schema_update_committed",
+                f"added_columns={len(missing_columns)}",
+            )
             
     except Exception as e:
         logger.error("Failed to update schema for table %s: %s", table_name, e)
@@ -164,17 +185,21 @@ def prepare_dn_table_migration(db: Session) -> None:
 
         # Step 1: Drop status_delivery
         if has_status_delivery:
-            logger.info("Dropping existing status_delivery column from DN table")
-            db.execute(text('ALTER TABLE "dn" DROP COLUMN "status_delivery"'))
+            sql_drop_dn = 'ALTER TABLE "dn" DROP COLUMN "status_delivery"'
+            log_migration_action("dn", "drop_column", sql_drop_dn)
+            db.execute(text(sql_drop_dn))
             db.commit()
-            logger.info("Successfully dropped status_delivery column")
+            log_migration_action("dn", "drop_column_committed", 'status_delivery')
 
         # Step 2: Rename status to status_delivery and make it nullable
-        logger.info("Renaming status column to status_delivery in DN table")
-        db.execute(text('ALTER TABLE "dn" RENAME COLUMN "status" TO "status_delivery"'))
-        db.execute(text('ALTER TABLE "dn" ALTER COLUMN "status_delivery" DROP NOT NULL'))
+        sql_rename_dn = 'ALTER TABLE "dn" RENAME COLUMN "status" TO "status_delivery"'
+        sql_make_nullable_dn = 'ALTER TABLE "dn" ALTER COLUMN "status_delivery" DROP NOT NULL'
+        log_migration_action("dn", "rename_column", sql_rename_dn)
+        db.execute(text(sql_rename_dn))
+        log_migration_action("dn", "alter_column", sql_make_nullable_dn)
+        db.execute(text(sql_make_nullable_dn))
         db.commit()
-        logger.info("Successfully renamed status to status_delivery and made it nullable")
+        log_migration_action("dn", "rename_and_make_nullable_committed", "status -> status_delivery")
 
         logger.info("Completed DN table preparation")
 
@@ -190,16 +215,24 @@ def prepare_dn_table_migration(db: Session) -> None:
                 if has_status_rec:
                     logger.info("Preparing dn_record table migration: found 'status' column")
                     if has_status_delivery_rec:
-                        logger.info("Dropping existing status_delivery column from dn_record table")
-                        db.execute(text('ALTER TABLE "dn_record" DROP COLUMN "status_delivery"'))
+                        sql_drop_dn_record = 'ALTER TABLE "dn_record" DROP COLUMN "status_delivery"'
+                        log_migration_action("dn_record", "drop_column", sql_drop_dn_record)
+                        db.execute(text(sql_drop_dn_record))
                         db.commit()
-                        logger.info("Successfully dropped status_delivery column from dn_record")
+                        log_migration_action("dn_record", "drop_column_committed", 'status_delivery')
 
-                    logger.info("Renaming status column to status_delivery in dn_record table")
-                    db.execute(text('ALTER TABLE "dn_record" RENAME COLUMN "status" TO "status_delivery"'))
-                    db.execute(text('ALTER TABLE "dn_record" ALTER COLUMN "status_delivery" DROP NOT NULL'))
+                    sql_rename_dn_record = 'ALTER TABLE "dn_record" RENAME COLUMN "status" TO "status_delivery"'
+                    sql_make_nullable_dn_record = 'ALTER TABLE "dn_record" ALTER COLUMN "status_delivery" DROP NOT NULL'
+                    log_migration_action("dn_record", "rename_column", sql_rename_dn_record)
+                    db.execute(text(sql_rename_dn_record))
+                    log_migration_action("dn_record", "alter_column", sql_make_nullable_dn_record)
+                    db.execute(text(sql_make_nullable_dn_record))
                     db.commit()
-                    logger.info("Successfully renamed status to status_delivery and made it nullable in dn_record")
+                    log_migration_action(
+                        "dn_record",
+                        "rename_and_make_nullable_committed",
+                        "status -> status_delivery",
+                    )
                 else:
                     logger.info("No 'status' column in dn_record table, skipping dn_record preparation")
         except Exception as e:

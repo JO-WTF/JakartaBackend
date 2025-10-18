@@ -165,15 +165,53 @@ def ensure_dn(db: Session, dn_number: str, **fields: Any) -> DN:
     return dn
 
 
-def delete_dn(db: Session, dn_number: str) -> bool:
+def _serialize_dn_record(record: DNRecord) -> Dict[str, Any]:
+    return {
+        "id": record.id,
+        "dn_number": record.dn_number,
+        "status_delivery": record.status_delivery,
+        "status_site": record.status_site,
+        "remark": record.remark,
+        "photo_url": record.photo_url,
+        "lng": record.lng,
+        "lat": record.lat,
+        "updated_by": record.updated_by,
+        "phone_number": record.phone_number,
+        "created_at": record.created_at,
+    }
+
+
+def _serialize_dn(dn: DN) -> Dict[str, Any]:
+    return {
+        "id": dn.id,
+        "dn_number": dn.dn_number,
+        "status_delivery": dn.status_delivery,
+        "status_site": dn.status_site,
+        "remark": dn.remark,
+        "photo_url": dn.photo_url,
+        "lng": dn.lng,
+        "lat": dn.lat,
+        "driver_contact_number": dn.driver_contact_number,
+        "last_updated_by": dn.last_updated_by,
+        "gs_sheet": dn.gs_sheet,
+        "gs_row": dn.gs_row,
+        "update_count": dn.update_count,
+    }
+
+
+def delete_dn(db: Session, dn_number: str) -> Dict[str, Any] | None:
     dn = db.query(DN).filter(DN.dn_number == dn_number).one_or_none()
     if not dn:
-        return False
+        return None
+
+    dn_data = _serialize_dn(dn)
+    related_records = db.query(DNRecord).filter(DNRecord.dn_number == dn_number).all()
+    related_records_data = [_serialize_dn_record(record) for record in related_records]
 
     db.query(DNRecord).filter(DNRecord.dn_number == dn_number).delete(synchronize_session=False)
     db.delete(dn)
     db.commit()
-    return True
+    return {"dn": dn_data, "records": related_records_data}
 
 
 def add_dn_record(
@@ -364,13 +402,14 @@ def update_dn_record(
     return obj
 
 
-def delete_dn_record(db: Session, rec_id: int) -> bool:
+def delete_dn_record(db: Session, rec_id: int) -> Dict[str, Any] | None:
     obj = db.query(DNRecord).get(rec_id)
     if not obj:
-        return False
+        return None
+    record_data = _serialize_dn_record(obj)
     db.delete(obj)
     db.commit()
-    return True
+    return record_data
 
 
 def list_dn_records_by_dn_numbers(
