@@ -689,6 +689,7 @@ def search_dn_list(
     status_wh_values: Sequence[str] | None = None,
     subcon_values: Sequence[str] | None = None,
     project_request: Sequence[str] | None = None,
+    mos_type_values: Sequence[str] | None = None,
     last_modified_from: datetime | None = None,
     last_modified_to: datetime | None = None,
     show_deleted: bool = False,
@@ -821,6 +822,11 @@ def search_dn_list(
     ]
     if trimmed_subcon_values:
         conds.append(func.trim(DN.subcon).in_(trimmed_subcon_values))
+    trimmed_mos_type_values = [
+        value.strip() for value in (mos_type_values or []) if isinstance(value, str) and value.strip()
+    ]
+    if trimmed_mos_type_values:
+        conds.append(func.trim(DN.mos_type).in_(trimmed_mos_type_values))
     trimmed_project_requests = [
         value.strip() for value in (project_request or []) if isinstance(value, str) and value.strip()
     ]
@@ -853,6 +859,7 @@ def get_dn_unique_field_values(db: Session) -> Tuple[Dict[str, List[str]], int]:
         "area": DN.area,
         "region": DN.region,
         "plan_mos_date": DN.plan_mos_date,
+        "mos_type": DN.mos_type,
         "subcon": DN.subcon,
         "status_wh": DN.status_wh,
         "status_delivery": DN.status_delivery,

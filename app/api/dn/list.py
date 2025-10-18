@@ -126,6 +126,7 @@ def search_dn_list_api(
     status_wh: Optional[List[str]] = Query(None, description="Status WH"),
     subcon: Optional[List[str]] = Query(None, description="Subcon"),
     project_request: Optional[List[str]] = Query(None, description="Project request (支持多个)"),
+    mos_type: Optional[List[str]] = Query(None, description="MOS type"),
     date_from: datetime | None = Query(None, description="Last modified start time (ISO 8601)"),
     date_to: datetime | None = Query(None, description="Last modified end time (ISO 8601)"),
     page: int = Query(1, ge=1),
@@ -164,6 +165,7 @@ def search_dn_list_api(
     subcon_values = _collect_query_values(subcon)
     area_values = _collect_query_values(area)
     project_values = _collect_query_values(project_request)
+    mos_type_values = _collect_query_values(mos_type)
     phone_number_value = phone_number.strip() if isinstance(phone_number, str) and phone_number.strip() else None
     modified_from, modified_to = parse_gmt7_date_range(date_from, date_to)
 
@@ -187,6 +189,7 @@ def search_dn_list_api(
         status_wh_values=status_wh_values,
         subcon_values=subcon_values,
         project_request=project_values,
+        mos_type_values=mos_type_values,
         last_modified_from=modified_from,
         last_modified_to=modified_to,
         page=1,
