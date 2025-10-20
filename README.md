@@ -99,6 +99,20 @@ app/
     └── time.py             # 时间处理
 ```
 
+## 本地运行/调试
+
+1. 安装依赖：`./setup.sh`（推荐使用虚拟环境）。
+2. 若需要覆盖默认环境变量，可创建 `.env.local` 文件。
+3. 运行本地启动脚本：`./scripts/run_local.sh`，它将
+   - 以 `tmp/local_dev.db` 作为默认 SQLite 数据库文件；
+   - 自动设置 `APP_ENV=local`、`STORAGE_DRIVER=disk`、`STORAGE_DISK_PATH=tmp/uploads` 等常用变量；
+   - 默认启用 `uvicorn --reload` 并监听 `127.0.0.1:8000`（可通过参数覆盖）。
+
+附加说明：
+- 如果需要访问 Google Sheets，同样需要在环境变量中提供有效的 `GOOGLE_SERVICE_ACCOUNT_CREDENTIALS` 和 `GOOGLE_SPREADSHEET_URL`。
+- 默认允许的 CORS 来源包含 `http://localhost:3000` / `http://127.0.0.1:3000` 以及 `http://localhost:5173` / `http://127.0.0.1:5173`，可通过 `--origins` 或环境变量 `ALLOWED_ORIGINS` 自定义。
+- 可通过 `./scripts/run_local.sh --help` 查看全部可用参数（如自定义数据库路径、端口、关闭自动重载、CORS 来源等）。
+
 ## 数据模型
 
 ### 核心实体

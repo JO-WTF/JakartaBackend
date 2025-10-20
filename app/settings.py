@@ -1,11 +1,15 @@
 # app/settings.py
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
 import os
 
+
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_parse_complex_value=False)
+
     app_env: str = os.getenv("APP_ENV", "development")
     database_url: str | None = os.getenv("DATABASE_URL")  # 不给默认，缺失就暴露问题
-    allowed_origins: list[str] = []
+    allowed_origins: list[str] | str = Field(default_factory=lambda: ["*"])
     storage_driver: str = os.getenv("STORAGE_DRIVER", "disk")
     storage_disk_path: str = os.getenv("STORAGE_DISK_PATH", "/data/uploads")
     s3_endpoint: str = os.getenv("S3_ENDPOINT", "")
@@ -18,10 +22,25 @@ class Settings(BaseSettings):
     google_spreadsheet_url: str = os.getenv("GOOGLE_SPREADSHEET_URL", "")
     google_service_account_credentials: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS")
 
-settings = Settings()
+    @field_validator("allowed_origins", mode="after")
+    @classmethod
+    def _parse_allowed_origins(cls, value):
+        """
+        Accept comma-separated strings (common in .env files) in addition to JSON arrays.
+        Defaults to wildcard (*) when empty.
+        """
+        if value is None or value == "":
+            return ["*"]
+        if isinstance(value, str):
+            parsed = [part.strip() for part in value.split(",") if part.strip()]
+            return parsed or ["*"]
+        if isinstance(value, (list, tuple, set)):
+            parsed = [str(part).strip() for part in value if str(part).strip()]
+            return parsed or ["*"]
+        return value
 
-raw = os.getenv("ALLOWED_ORIGINS", "")
-settings.allowed_origins = [x.strip() for x in raw.split(",") if x.strip()] or ["*"]
+
+settings = Settings()
 
 # 校正 DATABASE_URL（必须存在）
 if not settings.database_url:
@@ -30,6 +49,9 @@ if not settings.database_url:
 url = settings.database_url
 if url.startswith("postgres://"):
     url = url.replace("postgres://", "postgresql://", 1)
-if "sslmode=" not in url:
+
+# Only enforce sslmode for Postgres connections; sqlite/local URLs do not support it
+if url.split(":", 1)[0].startswith("postgres") and "sslmode=" not in url:
     url += ("&" if "?" in url else "?") + "sslmode=require"
+
 settings.database_url = url
