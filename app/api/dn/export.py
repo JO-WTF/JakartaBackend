@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.crud import get_dn_map_by_numbers
 from app.db import get_db
 from app.dn_columns import ensure_dynamic_columns_loaded
 from app.models import DN, DNRecord
+from app.services.dn_pdf import generate_dn_details_pdf
+from app.settings import settings
 from app.utils.query import normalize_batch_dn_numbers
 from app.utils.time import to_gmt7_iso
 
@@ -50,14 +53,8 @@ def _serialize_record(record: DNRecord) -> Dict[str, Any]:
     }
 
 
-@router.get("/export/details")
-def export_dn_details(
-    dn_number: List[str] | None = Query(None, description="DN number (支持多个)"),
-    db: Session = Depends(get_db),
-):
-    numbers = normalize_batch_dn_numbers(dn_number)
+def _collect_dn_export_entries(db: Session, numbers: List[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
     ensure_dynamic_columns_loaded(db)
-
     dn_map = get_dn_map_by_numbers(db, numbers)
 
     records = (
@@ -86,6 +83,17 @@ def export_dn_details(
             }
         )
 
+    return data, not_found
+
+
+@router.get("/export/details")
+def export_dn_details(
+    dn_number: List[str] | None = Query(None, description="DN number (支持多个)"),
+    db: Session = Depends(get_db),
+):
+    numbers = normalize_batch_dn_numbers(dn_number)
+    data, not_found = _collect_dn_export_entries(db, numbers)
+
     response: Dict[str, Any] = {
         "ok": True,
         "count": len(data),
@@ -94,3 +102,32 @@ def export_dn_details(
     if not_found:
         response["not_found_dn_numbers"] = not_found
     return response
+
+
+@router.get("/export/details-pdf")
+def export_dn_details_pdf(
+    dn_number: List[str] | None = Query(None, description="DN number (支持多个)"),
+    db: Session = Depends(get_db),
+):
+    numbers = normalize_batch_dn_numbers(dn_number)
+    data, not_found = _collect_dn_export_entries(db, numbers)
+
+    if not data:
+        raise HTTPException(status_code=404, detail="No DN data available for the provided numbers")
+
+    mapbox_token = settings.mapbox_access_token
+    if not mapbox_token:
+        raise HTTPException(status_code=500, detail="MAPBOX_ACCESS_TOKEN is not configured")
+
+    pdf_bytes = generate_dn_details_pdf(
+        data,
+        mapbox_token=mapbox_token,
+        storage_base_path=settings.storage_disk_path,
+    )
+
+    filename = f"dn-details-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if not_found:
+        headers["X-Not-Found-DN"] = ",".join(not_found)
+
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)

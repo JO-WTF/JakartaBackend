@@ -25,6 +25,9 @@ gspread==6.2.1
 # Data Processing
 pandas==2.2.3
 
+# Reporting
+reportlab==4.2.2
+
 # Task Scheduling
 APScheduler==3.10.4
 
