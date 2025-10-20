@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from .archive import router as archive_router
 from .columns import router as columns_router
+from .export import router as export_router
 from .list import router as list_router
 from .query import router as query_router
 from .stats import router as stats_router
@@ -18,5 +19,6 @@ router.include_router(sync_router)
 router.include_router(stats_router)
 router.include_router(list_router)
 router.include_router(query_router)
+router.include_router(export_router)
 
 __all__ = ["router"]
