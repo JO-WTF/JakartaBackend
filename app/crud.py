@@ -459,7 +459,6 @@ def list_dn_by_dn_numbers(
         db.query(DN)
         .outerjoin(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
         .filter(DN.dn_number.in_(numbers))
-        .filter(_ACTIVE_DN_EXPR)
     )
 
     total = base_q.count()
@@ -496,7 +495,6 @@ def list_dn_by_du_ids(
         db.query(DN)
         .outerjoin(latest_record_subq, DN.dn_number == latest_record_subq.c.dn_number)
         .filter(DN.du_id.in_(identifiers))
-        .filter(_ACTIVE_DN_EXPR)
     )
 
     total = base_q.count()
