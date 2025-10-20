@@ -64,8 +64,8 @@ def normalize_batch_dn_numbers(*value_lists: Optional[List[str]]) -> list[str]:
     if not numbers:
         raise HTTPException(status_code=400, detail="Missing dn_number")
 
-    invalid = [x for x in numbers if not DN_RE.fullmatch(x)]
-    if invalid:
-        raise HTTPException(status_code=400, detail=f"Invalid DN number(s): {', '.join(invalid)}")
+    valid_numbers = [value for value in numbers if DN_RE.fullmatch(value)]
+    if not valid_numbers:
+        raise HTTPException(status_code=400, detail="Missing valid dn_number")
 
-    return numbers
+    return valid_numbers

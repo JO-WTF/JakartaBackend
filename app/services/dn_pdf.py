@@ -31,11 +31,12 @@ PHOTO_IMAGE_WIDTH = 80
 PHOTO_IMAGE_HEIGHT = 120
 MAP_ZOOM_LEVEL = 13
 
-TITLE_BACKGROUND = colors.HexColor("#A7C8FF")
+TITLE_BACKGROUND = colors.HexColor("#528CD9")
 TITLE_TEXT_COLOR = colors.HexColor("#ffffff")
 CARD_BACKGROUND = colors.HexColor("#F7F9FF")
 CARD_BORDER_COLOR = colors.HexColor("#D6E2FF")
 LABEL_TEXT_COLOR = colors.HexColor("#51607A")
+HEADER_VALUE_FONT = "HeiseiKakuGo-W5"
 
 STATUS_COLOR_MAP: Dict[str, Tuple[colors.Color, colors.Color]] = {
     "no status": (colors.HexColor("#FFF3B0"), colors.HexColor("#8A6A03")),
@@ -49,6 +50,7 @@ DEFAULT_STATUS_COLORS: Tuple[colors.Color, colors.Color] = (
 
 # Ensure font is registered once for Unicode support.
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
 
 styles = getSampleStyleSheet()
 style_title = ParagraphStyle(
@@ -239,9 +241,11 @@ def _build_status_table(record: Mapping[str, Any]) -> Table:
 
 
 def _build_dn_header(dn_data: Mapping[str, Any], *, width: float) -> Table:
+    dn_value = _format_value(dn_data.get("dn_number"))
+    region_value = _format_value(dn_data.get("region"))
     header_text = (
-        f"<font name='Helvetica-Bold'>DN Number:</font> {_format_value(dn_data.get('dn_number'))} &nbsp;&nbsp;&nbsp; "
-        f"<font name='Helvetica-Bold'>Region:</font> {_format_value(dn_data.get('region'))}"
+        f"<font name='Helvetica-Bold'>DN Number:</font> <font name='{HEADER_VALUE_FONT}'>{dn_value}</font> &nbsp;&nbsp;&nbsp; "
+        f"<font name='Helvetica-Bold'>Region:</font> <font name='{HEADER_VALUE_FONT}'>{region_value}</font>"
     )
     header_paragraph = Paragraph(header_text, style_dn_header)
     header_table = Table([[header_paragraph]], colWidths=[width])

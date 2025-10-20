@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -92,6 +93,8 @@ def export_dn_details(
     db: Session = Depends(get_db),
 ):
     numbers = normalize_batch_dn_numbers(dn_number)
+    if not numbers:
+        raise HTTPException(status_code=400, detail="Missing dn_number")
     data, not_found = _collect_dn_export_entries(db, numbers)
 
     response: Dict[str, Any] = {
@@ -110,6 +113,8 @@ def export_dn_details_pdf(
     db: Session = Depends(get_db),
 ):
     numbers = normalize_batch_dn_numbers(dn_number)
+    if not numbers:
+        raise HTTPException(status_code=400, detail="Missing dn_number")
     data, not_found = _collect_dn_export_entries(db, numbers)
 
     if not data:
@@ -128,6 +133,7 @@ def export_dn_details_pdf(
     filename = f"dn-details-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     if not_found:
-        headers["X-Not-Found-DN"] = ",".join(not_found)
+        encoded_not_found = [quote(value, safe="") for value in not_found]
+        headers["X-Not-Found-DN"] = ",".join(encoded_not_found)
 
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
