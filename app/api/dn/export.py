@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any, Dict, List, Tuple
 from urllib.parse import quote
 
@@ -14,9 +14,10 @@ from app.crud import get_dn_map_by_numbers
 from app.db import get_db
 from app.dn_columns import ensure_dynamic_columns_loaded
 from app.models import DN, DNRecord
-from app.services.dn_pdf import generate_dn_details_pdf
+from app.services.dn_pdf import generate_dn_details_pdf, generate_early_bird_pdf
 from app.settings import settings
-from app.utils.query import normalize_batch_dn_numbers
+from app.services.dn_early_bird import collect_early_bird_results
+from app.utils.query import collect_query_values, normalize_batch_dn_numbers
 from app.utils.time import to_gmt7_iso
 
 router = APIRouter(prefix="/api/dn")
@@ -135,5 +136,54 @@ def export_dn_details_pdf(
     if not_found:
         encoded_not_found = [quote(value, safe="") for value in not_found]
         headers["X-Not-Found-DN"] = ",".join(encoded_not_found)
+
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+
+@router.get("/early-bird/export")
+def export_early_bird_pdf(
+    start_date: date = Query(..., description="起始 Plan MOS 日期 (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="结束 Plan MOS 日期 (YYYY-MM-DD)"),
+    region: List[str] | None = Query(None, description="按 Region 过滤 (不区分大小写)"),
+    area: List[str] | None = Query(None, description="按 Area 过滤 (不区分大小写)"),
+    lsp: List[str] | None = Query(None, description="按 LSP 过滤 (不区分大小写)"),
+    db: Session = Depends(get_db),
+):
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+
+    region_values = collect_query_values(region)
+    area_values = collect_query_values(area)
+    lsp_values = collect_query_values(lsp)
+
+    try:
+        results = collect_early_bird_results(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+            region_filters=region_values,
+            area_filters=area_values,
+            lsp_filters=lsp_values,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not results:
+        raise HTTPException(status_code=404, detail="No early-bird data for the provided filters")
+
+    mapbox_token = settings.mapbox_access_token
+    if not mapbox_token:
+        raise HTTPException(status_code=500, detail="MAPBOX_ACCESS_TOKEN is not configured")
+
+    pdf_bytes = generate_early_bird_pdf(
+        results,
+        mapbox_token=mapbox_token,
+        storage_base_path=settings.storage_disk_path,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    filename = f"early-bird-dn-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
 
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)

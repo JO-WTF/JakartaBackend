@@ -20,9 +20,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.services.dn_early_bird import EarlyBirdResult
 from app.utils.logging import logger
 
-__all__ = ["generate_dn_details_pdf"]
+__all__ = ["generate_dn_details_pdf", "generate_early_bird_pdf"]
 
 
 MAP_IMAGE_WIDTH = 80
@@ -30,6 +31,11 @@ MAP_IMAGE_HEIGHT = 80
 PHOTO_IMAGE_WIDTH = 80
 PHOTO_IMAGE_HEIGHT = 120
 MAP_ZOOM_LEVEL = 13
+
+EARLY_BIRD_MAP_WIDTH = 128
+EARLY_BIRD_MAP_HEIGHT = int(EARLY_BIRD_MAP_WIDTH * 3 / 2)
+EARLY_BIRD_PHOTO_WIDTH = EARLY_BIRD_MAP_WIDTH
+EARLY_BIRD_PHOTO_HEIGHT = EARLY_BIRD_MAP_HEIGHT
 
 TITLE_BACKGROUND = colors.HexColor("#528CD9")
 TITLE_TEXT_COLOR = colors.HexColor("#ffffff")
@@ -75,6 +81,72 @@ style_small = ParagraphStyle(
     fontName="STSong-Light",
     fontSize=9,
     textColor=colors.grey,
+)
+style_early_title = ParagraphStyle(
+    "early-title",
+    parent=styles["Title"],
+    fontName="Helvetica-Bold",
+    fontSize=16,
+    textColor=colors.HexColor("#21324B"),
+    leading=20,
+)
+style_early_header = ParagraphStyle(
+    "early-header",
+    parent=styles["Normal"],
+    fontName="Helvetica-Bold",
+    fontSize=16,
+    leading=20,
+    textColor=colors.HexColor("#1B1D2A"),
+    wordWrap="LTR",
+    spaceAfter=2,
+)
+style_early_subtext = ParagraphStyle(
+    "early-subtext",
+    parent=styles["Normal"],
+    fontName="Helvetica",
+    fontSize=10,
+    leading=13,
+    textColor=colors.HexColor("#687385"),
+)
+style_early_attr_label = ParagraphStyle(
+    "early-attr-label",
+    parent=styles["Normal"],
+    fontName="Helvetica",
+    fontSize=9,
+    leading=12,
+    textColor=colors.HexColor("#9AA1B3"),
+)
+style_early_attr_value = ParagraphStyle(
+    "early-attr-value",
+    parent=styles["Normal"],
+    fontName="Helvetica",
+    fontSize=10,
+    leading=13,
+    textColor=colors.HexColor("#1D232F"),
+    wordWrap="LTR",
+)
+style_early_region = ParagraphStyle(
+    "early-region",
+    parent=styles["Normal"],
+    fontName="Helvetica",
+    fontSize=9,
+    leading=12,
+    textColor=colors.HexColor("#7B8395"),
+    alignment=2,
+    wordWrap="LTR",
+)
+style_early_tag = ParagraphStyle(
+    "early-tag",
+    parent=styles["Normal"],
+    fontName="Helvetica",
+    fontSize=8,
+    leading=10,
+    textColor=colors.HexColor("#5B6474"),
+    backColor=colors.HexColor("#EEF3FD"),
+    borderColor=colors.HexColor("#CCD7EE"),
+    borderWidth=0.4,
+    borderPadding=2,
+    alignment=0,
 )
 style_dn_header = ParagraphStyle(
     "dn-header",
@@ -154,13 +226,24 @@ def _fetch_url_bytes(url: str, timeout: int = 10) -> bytes | None:
     return None
 
 
-def _fetch_map_image(lng: float, lat: float, token: str, width: int = 256, height: int = 256) -> bytes | None:
+def _fetch_map_image(
+    lng: float,
+    lat: float,
+    token: str,
+    width: int = 256,
+    height: int = 256,
+    *,
+    scale: float = 2.0,
+) -> bytes | None:
     coordinates = f"{lng:.6f},{lat:.6f}"
     marker = f"pin-s+ff0000({coordinates})"
+    fetch_scale = 1.0 if scale is None else max(scale, 1.0)
+    fetch_width = max(1, int(round(width * fetch_scale)))
+    fetch_height = max(1, int(round(height * fetch_scale)))
     params = urlencode({"access_token": token})
     url = (
         "https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/"
-        f"{marker}/{coordinates},{MAP_ZOOM_LEVEL}/{width}x{height}?{params}"
+        f"{marker}/{coordinates},{MAP_ZOOM_LEVEL}/{fetch_width}x{fetch_height}?{params}"
     )
     return _fetch_url_bytes(url)
 
@@ -198,6 +281,269 @@ def _parse_coordinates(lng: Any, lat: Any) -> Tuple[float, float] | None:
         return lng_val, lat_val
     except (TypeError, ValueError):
         return None
+
+
+def _format_date(value: Any) -> str:
+    if value is None or value == "-":
+        return "-"
+    if isinstance(value, datetime.date):
+        return value.strftime("%Y-%m-%d")
+    return _format_value(value)
+
+
+def _build_early_bird_attribute_table(result: "EarlyBirdResult", *, column_width: float) -> Table:
+    attrs = [
+        ("Plan MOS Date", _format_date(result.plan_date)),
+        ("Area", _format_value(result.dn.area)),
+        ("LSP", _format_value(result.dn.lsp)),
+        ("Arrival Status", _format_value(result.arrival_status)),
+        ("Arrival Time", _format_datetime(result.arrival_time.isoformat())),
+        ("Cut Off Time", _format_datetime(result.cutoff_time.isoformat())),
+        ("Updated By", _format_value(result.record.updated_by)),
+        ("Phone Number", _format_value(result.record.phone_number)),
+    ]
+
+    cell_inner_width = max(column_width - 8, 80)
+
+    def _make_cell(label: str, value: str) -> Table:
+        label_text = html.escape(label.upper()) if label else "&nbsp;"
+        value_text = value if label else "&nbsp;"
+        label_para = Paragraph(label_text, style_early_attr_label)
+        value_para = Paragraph(value_text, style_early_attr_value)
+        cell_table = Table([[label_para], [Spacer(1, 2)], [value_para]], colWidths=[cell_inner_width])
+        cell_table.setStyle(
+            TableStyle(
+                [
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        return cell_table
+
+    rows: list[list[Any]] = []
+    for idx in range(0, len(attrs), 2):
+        left_label, left_value = attrs[idx]
+        left_cell = _make_cell(left_label, left_value)
+
+        if idx + 1 < len(attrs):
+            right_label, right_value = attrs[idx + 1]
+            right_cell = _make_cell(right_label, right_value)
+        else:
+            right_cell = _make_cell("", "")
+
+        rows.append([left_cell, right_cell])
+
+    attr_table = Table(rows, colWidths=[column_width, column_width])
+    attr_table.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    return attr_table
+
+
+def _build_early_bird_card(
+    result: "EarlyBirdResult",
+    map_fetcher: Callable[["EarlyBirdResult"], bytes | None],
+    photo_loader: Callable[["EarlyBirdResult"], bytes | None],
+    content_width: float,
+) -> Table:
+    map_padding_left = 8
+    map_padding_right = 8
+    map_column_width = EARLY_BIRD_MAP_WIDTH + map_padding_left + map_padding_right
+    detail_padding_left = 14
+    detail_padding_right = 14
+
+    detail_column_width = content_width - (2 * map_column_width)
+    if detail_column_width < 200:
+        detail_column_width = 200
+        total_width = detail_column_width + 2 * map_column_width
+        if total_width > content_width:
+            detail_column_width = max(content_width - (2 * map_column_width), 160)
+    usable_detail_width = max(detail_column_width - detail_padding_left - detail_padding_right, 140)
+
+    header_value = html.escape(result.dn.dn_number or "-")
+    header = Paragraph(header_value, style_early_header)
+    region_value = _format_value(result.dn.region)
+    region_para = Paragraph(region_value, style_early_region)
+    attr_column_width = max(usable_detail_width / 2, 130)
+    attr_table = _build_early_bird_attribute_table(result, column_width=attr_column_width)
+
+    chip_para = Paragraph("EARLY BIRD", style_early_tag)
+    chip_width = min(70, max(usable_detail_width - 20, 40))
+    chip_table = Table([[chip_para]], colWidths=[chip_width])
+    chip_table.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ]
+        )
+    )
+
+    region_col_width = min(120, max(usable_detail_width * 0.35, 60))
+    header_col_width = max(usable_detail_width - region_col_width, 120)
+    header_table = Table([[header, region_para]], colWidths=[header_col_width, region_col_width])
+    header_table.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (1, 0), (1, 0), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+
+    detail_rows = [[chip_table], [Spacer(1, 2)], [header_table], [Spacer(1, 6)], [attr_table]]
+    detail_table = Table(detail_rows, colWidths=[usable_detail_width])
+    detail_table.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("ALIGN", (0, 0), (0, 0), "LEFT"),
+            ]
+        )
+    )
+
+    map_bytes = map_fetcher(result)
+    map_flowable = _image_from_bytes(map_bytes, EARLY_BIRD_MAP_WIDTH, EARLY_BIRD_MAP_HEIGHT, "No Map")
+
+    photo_bytes = photo_loader(result)
+    photo_flowable = _image_from_bytes(
+        photo_bytes,
+        EARLY_BIRD_PHOTO_WIDTH,
+        EARLY_BIRD_PHOTO_HEIGHT,
+        "No Photo",
+    )
+
+    card_table = Table(
+        [[detail_table, map_flowable, photo_flowable]],
+        colWidths=[detail_column_width, map_column_width, map_column_width],
+    )
+    card_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+                ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#F8FAFF")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#D7DEEB")),
+                ("LEFTPADDING", (0, 0), (0, 0), detail_padding_left),
+                ("RIGHTPADDING", (0, 0), (0, 0), detail_padding_right),
+                ("TOPPADDING", (0, 0), (0, 0), 16),
+                ("BOTTOMPADDING", (0, 0), (0, 0), 16),
+                ("LEFTPADDING", (1, 0), (2, 0), map_padding_left),
+                ("RIGHTPADDING", (1, 0), (2, 0), map_padding_right),
+                ("TOPPADDING", (1, 0), (2, 0), 12),
+                ("BOTTOMPADDING", (1, 0), (2, 0), 12),
+                ("ALIGN", (1, 0), (2, 0), "CENTER"),
+                ("VALIGN", (1, 0), (2, 0), "MIDDLE"),
+            ]
+        )
+    )
+    return card_table
+
+
+def generate_early_bird_pdf(
+    results: Sequence[EarlyBirdResult],
+    *,
+    mapbox_token: str,
+    storage_base_path: str,
+    start_date: datetime.date,
+    end_date: datetime.date,
+) -> bytes:
+    if not results:
+        raise ValueError("No early-bird data to export")
+
+    if not mapbox_token:
+        raise ValueError("mapbox_token is required to generate the PDF.")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=2 * mm,
+        rightMargin=2 * mm,
+        topMargin=5 * mm,
+        bottomMargin=5 * mm,
+    )
+
+    map_cache: Dict[Tuple[float, float], bytes | None] = {}
+
+    def map_fetcher(result: EarlyBirdResult) -> bytes | None:
+        record_lng = getattr(result.record, "lng", None)
+        record_lat = getattr(result.record, "lat", None)
+        dn_lng = getattr(result.dn, "lng", None)
+        dn_lat = getattr(result.dn, "lat", None)
+        lng_value = record_lng if record_lng not in (None, "") else dn_lng
+        lat_value = record_lat if record_lat not in (None, "") else dn_lat
+        coords = _parse_coordinates(lng_value, lat_value)
+        if coords is None:
+            return None
+        if coords not in map_cache:
+            try:
+                map_cache[coords] = _fetch_map_image(
+                    coords[0],
+                    coords[1],
+                    mapbox_token,
+                    width=EARLY_BIRD_MAP_WIDTH,
+                    height=EARLY_BIRD_MAP_HEIGHT,
+                    scale=2.0,
+                )
+            except Exception:
+                logger.exception("Failed to fetch map image for coordinates %s", coords)
+                map_cache[coords] = None
+        return map_cache.get(coords)
+
+    def photo_loader(result: EarlyBirdResult) -> bytes | None:
+        photo_url = getattr(result.record, "photo_url", None) or getattr(result.dn, "photo_url", None)
+        return _resolve_photo_bytes(photo_url, storage_base_path)
+
+    elements: list = []
+    elements.append(Paragraph("Early Bird DN Report", style_early_title))
+    range_text = (
+        f"Plan MOS Date Range: {start_date.strftime('%Y-%m-%d')} – {end_date.strftime('%Y-%m-%d')}"
+    )
+    elements.append(Paragraph(range_text, style_early_subtext))
+    elements.append(Spacer(1, 18))
+
+    available_width = doc.width
+
+    for result in results:
+        card = _build_early_bird_card(result, map_fetcher, photo_loader, available_width)
+        elements.append(card)
+        elements.append(Spacer(1, 12))
+
+    def footer(canvas, _doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.grey)
+        canvas.drawCentredString(A4[0] / 2.0, 1.0 * cm, "Generated by Jakarta Backend")
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=footer, onLaterPages=footer)
+
+    buffer.seek(0)
+    return buffer.read()
 
 
 def _resolve_status_colors(value: Any) -> Tuple[colors.Color, colors.Color]:
@@ -359,7 +705,14 @@ def generate_dn_details_pdf(
             return None
         if coords not in map_cache:
             try:
-                map_cache[coords] = _fetch_map_image(coords[0], coords[1], mapbox_token)
+                map_cache[coords] = _fetch_map_image(
+                    coords[0],
+                    coords[1],
+                    mapbox_token,
+                    width=MAP_IMAGE_WIDTH,
+                    height=MAP_IMAGE_HEIGHT,
+                    scale=2.0,
+                )
             except Exception:
                 logger.exception("Failed to fetch map image for coordinates %s", coords)
                 map_cache[coords] = None
