@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Iterable, List, Optional
+from datetime import date, datetime, time, timezone
+from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
@@ -12,12 +12,13 @@ from sqlalchemy.orm import Session
 from app.crud import get_latest_dn_records_map, list_all_dn_records, list_dn_by_dn_numbers, list_dn_by_du_ids, search_dn_list
 from app.db import get_db
 from app.dn_columns import get_sheet_columns
-from app.models import DN
+from app.models import DN, DNRecord
 from app.utils.query import normalize_batch_dn_numbers
-from app.utils.time import parse_gmt7_date_range, to_gmt7_iso, TZ_GMT7
+from app.utils.time import TZ_GMT7, parse_gmt7_date_range, parse_plan_mos_date, to_gmt7_iso
 from app.core.sync import _normalize_status_delivery_value
 from app.core.google import make_gs_cell_url
 from app.api.dn.stats import _normalize_lsp_label
+from app.constants import EARLY_BIRD_AREA_THRESHOLDS
 
 router = APIRouter(prefix="/api/dn")
 
@@ -62,6 +63,32 @@ def _normalize_batch_du_ids(values: Optional[List[str]] | None) -> list[str]:
     if not du_ids:
         raise HTTPException(status_code=400, detail="Missing du_id")
     return du_ids
+
+
+def _normalize_text_label(value: Optional[str]) -> str | None:
+    if value is None:
+        return None
+    collapsed = " ".join(value.strip().split())
+    return collapsed.lower() if collapsed else None
+
+
+def _normalize_area_label(value: Optional[str]) -> str | None:
+    return _normalize_text_label(value)
+
+
+def _get_area_threshold(area: Optional[str]) -> int | None:
+    normalized = _normalize_area_label(area)
+    if not normalized:
+        return None
+    return EARLY_BIRD_AREA_THRESHOLDS.get(normalized)
+
+
+def _to_jakarta(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TZ_GMT7)
 
 
 @router.get("/list")
@@ -291,6 +318,187 @@ def search_dn_list_api(
         data.append(row)
 
     return {"ok": True, "total": total, "page": page, "page_size": page_size, "items": data, "stats": stats}
+
+
+@router.get("/list/early-bird")
+def list_early_bird_dn(
+    start_date: date = Query(..., description="起始 Plan MOS 日期 (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="结束 Plan MOS 日期 (YYYY-MM-DD)"),
+    region: Optional[List[str]] = Query(None, description="按 Region 过滤 (不区分大小写)"),
+    area: Optional[List[str]] = Query(None, description="按 Area 过滤 (不区分大小写)"),
+    lsp: Optional[List[str]] = Query(None, description="按 LSP 过滤 (不区分大小写)"),
+    db: Session = Depends(get_db),
+):
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+
+    def _make_filter(values: list[str] | None, normalizer) -> set[str] | None:
+        if not values:
+            return None
+        normalized_values: list[str] = []
+        for value in values:
+            normalized = normalizer(value)
+            if normalized:
+                normalized_values.append(normalized)
+        return set(normalized_values)
+
+    region_values = _collect_query_values(region)
+    area_values = _collect_query_values(area)
+    lsp_values = _collect_query_values(lsp)
+
+    region_filter_set = _make_filter(region_values, _normalize_text_label)
+    area_filter_set = _make_filter(area_values, _normalize_area_label)
+    lsp_filter_set = _make_filter(lsp_values, _normalize_text_label)
+
+    base_query = (
+        db.query(DN)
+        .filter(DN.plan_mos_date.isnot(None))
+        .filter(func.length(func.trim(DN.plan_mos_date)) > 0)
+    )
+
+    candidates: Dict[str, dict[str, Any]] = {}
+    for dn in base_query:
+        plan_date = parse_plan_mos_date(getattr(dn, "plan_mos_date", None))
+        if plan_date is None or plan_date < start_date or plan_date > end_date:
+            continue
+
+        region_value = _normalize_text_label(getattr(dn, "region", None))
+        if region_filter_set is not None and region_value not in region_filter_set:
+            continue
+
+        area_value_raw = getattr(dn, "area", None)
+        area_value = _normalize_area_label(area_value_raw)
+        if area_filter_set is not None and area_value not in area_filter_set:
+            continue
+
+        lsp_value = _normalize_text_label(getattr(dn, "lsp", None))
+        if lsp_filter_set is not None and lsp_value not in lsp_filter_set:
+            continue
+
+        threshold_hour = _get_area_threshold(area_value_raw)
+        if threshold_hour is None:
+            continue
+
+        candidates[dn.dn_number] = {
+            "dn": dn,
+            "plan_date": plan_date,
+            "threshold_hour": threshold_hour,
+        }
+
+    if not candidates:
+        return {
+            "ok": True,
+            "total": 0,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "data": [],
+        }
+
+    dn_numbers = list(candidates.keys())
+    normalized_status = func.upper(func.trim(DNRecord.status_delivery))
+    arrival_records = (
+        db.query(DNRecord)
+        .filter(DNRecord.dn_number.in_(dn_numbers))
+        .filter(DNRecord.status_delivery.isnot(None))
+        .filter(normalized_status.in_(("ARRIVED AT SITE", "POD")))
+        .order_by(DNRecord.dn_number.asc(), DNRecord.created_at.asc(), DNRecord.id.asc())
+        .all()
+    )
+
+    latest_arrivals: dict[str, dict[str, Any]] = {}
+    for record in arrival_records:
+        meta = candidates.get(record.dn_number)
+        if not meta:
+            continue
+
+        arrival_time = _to_jakarta(record.created_at)
+        if arrival_time is None:
+            continue
+        if arrival_time.date() != meta["plan_date"]:
+            continue
+
+        raw_status = (record.status_delivery or "").strip().upper()
+        if raw_status not in {"ARRIVED AT SITE", "POD"}:
+            continue
+
+        updater = (record.updated_by or "").strip().lower()
+        if updater != "driver":
+            continue
+
+        priority = 0 if raw_status == "ARRIVED AT SITE" else 1
+        existing = latest_arrivals.get(record.dn_number)
+        if (
+            existing is None
+            or priority < existing["priority"]
+            or (priority == existing["priority"] and arrival_time > existing["arrival_time"])
+        ):
+            latest_arrivals[record.dn_number] = {
+                "arrival_time": arrival_time,
+                "priority": priority,
+                "status": raw_status,
+                "record": record,
+            }
+
+    if not latest_arrivals:
+        return {
+            "ok": True,
+            "total": 0,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "data": [],
+        }
+
+    raw_results: list[tuple[DN, date, datetime, datetime, DNRecord, str]] = []
+    for dn_number, meta in candidates.items():
+        arrival_meta = latest_arrivals.get(dn_number)
+        if not arrival_meta:
+            continue
+
+        arrival_time = arrival_meta["arrival_time"]
+        record = arrival_meta["record"]
+        status_label = arrival_meta["status"]
+        cutoff_time = datetime.combine(
+            meta["plan_date"],
+            time(meta["threshold_hour"], 0, tzinfo=TZ_GMT7),
+        )
+        if arrival_time >= cutoff_time:
+            continue
+
+        raw_results.append((meta["dn"], meta["plan_date"], arrival_time, cutoff_time, record, status_label))
+
+    raw_results.sort(key=lambda item: (item[1], item[2], item[0].dn_number))
+
+    data = [
+        {
+            "dn_id": dn.id,
+            "dn_number": dn.dn_number,
+            "area": dn.area,
+            "region": dn.region,
+            "lsp": dn.lsp,
+            "plan_mos_date": dn.plan_mos_date,
+            "plan_mos_date_iso": plan_date.isoformat(),
+            "arrival_record_id": record.id,
+            "arrived_at_site_time": to_gmt7_iso(arrival_time),
+            "cutoff_time": to_gmt7_iso(cutoff_time),
+            "is_deleted": dn.is_deleted,
+            "arrival_status": status_label,
+            "record_created_at": to_gmt7_iso(record.created_at),
+            "record_updated_by": record.updated_by,
+            "record_phone_number": record.phone_number,
+            "record_lat": record.lat,
+            "record_lng": record.lng,
+            "record_photo_url": record.photo_url,
+        }
+        for dn, plan_date, arrival_time, cutoff_time, record, status_label in raw_results
+    ]
+
+    return {
+        "ok": True,
+        "total": len(data),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "data": data,
+    }
 
 
 @router.get("/records")

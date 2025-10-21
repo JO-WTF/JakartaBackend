@@ -13,6 +13,7 @@ __all__ = [
     "STATUS_DELIVERY_LOOKUP",
     "ARRIVAL_STATUSES",
     "DEPARTURE_STATUSES",
+    "EARLY_BIRD_AREA_THRESHOLDS",
 ]
 
 # Regular expression for DN number validation
@@ -89,3 +90,30 @@ DEPARTURE_STATUSES: frozenset[str] = frozenset(
         "DEPARTED FROM XD/PM",
     }
 )
+
+# Area-specific arrival thresholds (hour in GMT+7) used by the early-bird report.
+EARLY_BIRD_AREA_THRESHOLDS: dict[str, int] = {
+    "jabo": 6,
+    "new": 6,
+    "wj": 6,
+    "swap": 6,
+    "5g": 6,
+    "exp": 6,
+    "west java": 6,
+    "zone3": 6,
+    "zone2": 6,
+    "zone1": 6,
+    "zone 3": 6,
+    "zone 2": 6,
+    "zone 1": 6,
+    "central kalimantan": 7,
+    "west kalimantan": 7,
+    "south sumatera": 7,
+    "central sumatera": 7,
+    "central north sumatera": 7,
+    "bali": 5,
+    "ntb": 6,
+    "central java": 6,
+    "east java": 6,
+    "ntt": 6,
+}
