@@ -11,6 +11,13 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+try:
+    from PIL import Image as PILImage
+    from PIL import ImageOps
+except ImportError:  # Pillow is optional at import time; optimized resizing handled conditionally.
+    PILImage = None
+    ImageOps = None
+
 from reportlab.graphics.shapes import Drawing, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -203,10 +210,58 @@ def _format_datetime(value: Any) -> str:
         return html.escape(text)
 
 
-def _image_from_bytes(data: bytes | None, width: int, height: int, placeholder_text: str) -> Image | Drawing:
+def _shrink_image_bytes(data: bytes, max_width_px: int, max_height_px: int) -> bytes:
+    if PILImage is None or max_width_px <= 0 or max_height_px <= 0:
+        return data
+
+    try:
+        with PILImage.open(BytesIO(data)) as image:
+            image = ImageOps.exif_transpose(image) if ImageOps is not None else image
+            original_width, original_height = image.size
+
+            if original_width <= max_width_px and original_height <= max_height_px:
+                return data
+
+            image.thumbnail((max_width_px, max_height_px), resample=PILImage.LANCZOS)
+
+            output = BytesIO()
+            save_kwargs: dict[str, Any] = {"optimize": True}
+            format_hint = (image.format or "").upper()
+            has_alpha = "A" in image.getbands()
+
+            if has_alpha or format_hint == "PNG":
+                if image.mode not in ("RGBA", "LA"):
+                    image = image.convert("RGBA")
+                image.save(output, format="PNG", **save_kwargs)
+            else:
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
+                save_kwargs["quality"] = 85
+                image.save(output, format="JPEG", **save_kwargs)
+
+            return output.getvalue()
+    except Exception:
+        logger.exception("Failed to shrink image bytes for PDF; using original data.")
+        return data
+
+
+def _image_from_bytes(
+    data: bytes | None,
+    width: int,
+    height: int,
+    placeholder_text: str,
+    *,
+    shrink_if_needed: bool = False,
+) -> Image | Drawing:
     if data:
         try:
-            stream = BytesIO(data)
+            processed = data
+            if shrink_if_needed:
+                max_width_px = max(int(width * 4), width)
+                max_height_px = max(int(height * 4), height)
+                processed = _shrink_image_bytes(data, max_width_px, max_height_px)
+
+            stream = BytesIO(processed)
             stream.seek(0)
             return Image(stream, width=width, height=height)
         except Exception:
@@ -434,6 +489,7 @@ def _build_early_bird_card(
         EARLY_BIRD_PHOTO_WIDTH,
         EARLY_BIRD_PHOTO_HEIGHT,
         "No Photo",
+        shrink_if_needed=True,
     )
 
     card_table = Table(
@@ -629,7 +685,13 @@ def _build_record_row(
     map_flowable = _image_from_bytes(map_bytes, MAP_IMAGE_WIDTH, MAP_IMAGE_HEIGHT, "No Location")
 
     photo_bytes = photo_loader(record.get("photo_url"))
-    photo_flowable = _image_from_bytes(photo_bytes, PHOTO_IMAGE_WIDTH, PHOTO_IMAGE_HEIGHT, "No Photo")
+    photo_flowable = _image_from_bytes(
+        photo_bytes,
+        PHOTO_IMAGE_WIDTH,
+        PHOTO_IMAGE_HEIGHT,
+        "No Photo",
+        shrink_if_needed=True,
+    )
 
     table = Table(
         [
