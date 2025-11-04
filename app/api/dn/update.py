@@ -180,7 +180,14 @@ def update_dn(
     if should_check_sheet:
         logger.info("Syncing DN record to Google Sheet %s %d", gs_sheet_name, gs_row_index)
         gpread_result = sync_dn_record_to_sheet(
-            gs_sheet_name, gs_row_index, dn_number, status_delivery, status_site, remark, updated_by_value
+            gs_sheet_name,
+            gs_row_index,
+            dn_number,
+            status_delivery,
+            status_site,
+            remark,
+            updated_by_value,
+            phone_number_value,
         )
         logger.info("Google Sheet update result: %s", json.dumps(gpread_result))
         # preserve original var name used later

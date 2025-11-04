@@ -151,8 +151,9 @@ def sync_dn_record_to_sheet(
     status_site: str | None = None,
     remark: str | None = None,
     updated_by: str | None = None,
+    phone_number: str | None = None,
 ) -> dict[str, Any]:
-    """一次性写入 status_delivery、status_site、remark、atd/ata 到 Google Sheet。"""
+    """一次性写入 status_delivery、status_site、remark、updated_by、phone_number、atd/ata 到 Google Sheet。"""
     from app.constants import ARRIVAL_STATUSES, DEPARTURE_STATUSES
 
     column_names = get_sheet_columns()
@@ -190,6 +191,12 @@ def sync_dn_record_to_sheet(
         issue_remark_column_position = None
         if "issue_remark" in column_names:
             issue_remark_column_position = column_names.index("issue_remark") + 1
+        driver_contact_name_column_position = None
+        if "driver_contact_name" in column_names:
+            driver_contact_name_column_position = column_names.index("driver_contact_name") + 1
+        driver_contact_number_column_position = None
+        if "driver_contact_number" in column_names:
+            driver_contact_number_column_position = column_names.index("driver_contact_number") + 1
         atd_column_position = None
         ata_column_position = None
         if "actual_depart_from_start_point_atd" in column_names:
@@ -255,6 +262,12 @@ def sync_dn_record_to_sheet(
         if issue_remark_column_position is not None and remark is not None:
             _add_repeat_cell_request(issue_remark_column_position, remark)
             result["issue_remark_updated"] = True
+        if driver_contact_name_column_position is not None and updated_by is not None:
+            _add_repeat_cell_request(driver_contact_name_column_position, updated_by)
+            result["driver_contact_name_updated"] = True
+        if driver_contact_number_column_position is not None and phone_number is not None:
+            _add_repeat_cell_request(driver_contact_number_column_position, phone_number)
+            result["driver_contact_number_updated"] = True
 
         # 写 atd/ata
         status_delivery_upper = (status_delivery or "").strip().upper()
