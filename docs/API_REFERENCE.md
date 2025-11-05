@@ -1,83 +1,59 @@
-# JakartaBackend API 接口文档
+# JakartaBackend API Reference
 
-## 目录
-- [概述](#概述)
-- [通用说明](#通用说明)
-- [健康检查](#健康检查)
-- [DN 管理接口](#dn-管理接口)
-- [车辆管理接口](#车辆管理接口)
-- [数据模型](#数据模型)
-- [错误码](#错误码)
+This document describes every public endpoint exposed by the JakartaBackend FastAPI application.  
+All responses are JSON unless explicitly stated otherwise.
 
 ---
 
-## 概述
+## Overview
 
-JakartaBackend 提供 RESTful API 用于物流配送单据 (DN) 管理和车辆调度。所有接口返回 JSON 格式数据。
-
-**Base URL**: `http://your-domain.com`  
-**API Version**: `1.1.0`
+- **Base URL:** `https://your-domain.example` (replace with the deployed host)
+- **API version:** `1.1.0` (as declared in `app.main`)
+- **Authentication:** Not enforced by the backend. Deploy behind your own gateway if authentication is required.
 
 ---
 
-## 通用说明
+## Conventions
 
-### 响应格式
+### Response Envelope
 
-成功响应通常包含 `ok: true` 字段:
+Successful handlers return an object with `ok: true` and endpoint-specific fields. Errors raised by the application use HTTP status codes with either:
+
 ```json
-{
-  "ok": true,
-  "data": {...}
-}
+{"ok": false, "error": "error_code", "detail": "human readable message"}
 ```
 
-失败响应包含错误信息:
+or the default FastAPI structure:
+
 ```json
-{
-  "ok": false,
-  "error": "error_code",
-  "detail": "Error description"
-}
+{"detail": "Validation error or exception message"}
 ```
 
-### 时区说明
+### Time Zone & Formatting
 
-所有日期时间字段使用 **雅加达时区 (GMT+7)**。
+- Internal timestamps are stored in UTC.
+- API responses are converted to Jakarta time (GMT+7) using ISO-8601 strings, e.g. `"2025-01-12T14:30:00+07:00"`.
+- Query parameters expecting a date use the format `YYYY-MM-DD` unless otherwise noted.
 
-### Status Delivery 规范化
+### Identifier normalization
 
-所有 `status_delivery` 值会自动规范化为标准格式:
+- Delivery Note numbers are normalized (uppercase and trimmed) internally. Passing an invalid DN number yields `400`.
+- Status delivery values are normalized to canonical labels such as `On the way`, `On Site`, `POD`, etc. Blank or unknown values become `No Status`.
+- Vehicle plates are normalized by stripping whitespace and uppercasing before persistence.
 
-| 输入 (任意大小写) | 规范化输出 |
-|------------------|-----------|
-| `"on the way"` / `"ON THE WAY"` / `"On The Way"` | `"On the way"` |
-| `"prepare vehicle"` / `"PREPARE VEHICLE"` | `"Prepare Vehicle"` |
-| `"on site"` / `"ON SITE"` | `"On Site"` |
-| `"pod"` / `"POD"` | `"POD"` |
-| `"close by rn"` / `"CLOSE BY RN"` | `"Close by RN"` |
+### Mixed naming conventions
 
-标准状态值列表:
-- `Prepare Vehicle`
-- `On the way`
-- `On Site`
-- `POD`
-- `Waiting PIC Feedback`
-- `RePlan MOS due to LSP Delay`
-- `RePlan MOS Project`
-- `Cancel MOS`
-- `Close by RN`
-- `No Status` (空值或无效值的默认值)
+- Request bodies follow the aliases defined in Pydantic schemas (for example `vehiclePlate`, `LSP`).
+- Response payloads may mix snake_case (database columns) and camelCase (vehicle responses) depending on the originating service.
 
 ---
 
-## 健康检查
+## Health
 
-### GET /
-
-检查 API 服务健康状态。
-
-**响应**:
+#### GET /
+- **Description:** Lightweight probe used for uptime checks.
+- **Query parameters:** None.
+- **Response example (200):**
 ```json
 {
   "ok": true,
@@ -87,33 +63,155 @@ JakartaBackend 提供 RESTful API 用于物流配送单据 (DN) 管理和车辆�
 
 ---
 
-## DN 管理接口
+## Delivery Note APIs (`/api/dn`)
 
-### 1. DN 列表查询
+### Column management
 
-#### GET /api/dn/list
-
-获取 DN 列表。
-
-**查询参数**:
-- `page` (int, 可选): 页码，默认 1
-- `page_size` (int, 可选): 每页数量，默认 20
-
-**响应**:
+#### POST /api/dn/columns/extend
+- **Description:** Adds text columns to the `dn` table (and Google Sheet mapping) if they do not already exist.
+- **Request body (application/json):**
+```json
+{
+  "columns": ["custom_note", "last_mile_eta"]
+}
+```
+- **Responses:**
+  - `200` with the list of newly created columns plus the up-to-date sheet column list.
 ```json
 {
   "ok": true,
-  "total": 150,
-  "page": 1,
-  "page_size": 20,
+  "added_columns": ["custom_note"],
+  "columns": [
+    "dn_number",
+    "du_id",
+    "... trimmed ...",
+    "custom_note"
+  ]
+}
+```
+  - `400` when the request contains an invalid column name.
+
+---
+
+### Delivery note updates & history
+
+#### POST /api/dn/update
+- **Description:** Create a DN history record, update the master DN row, upload an optional photo, and sync status information to Google Sheet.
+- **Content type:** `multipart/form-data`
+- **Form fields:**
+  - `dnNumber` *(string, required)* – DN identifier.
+  - `status` *(string, optional)* – legacy status field; used as `status_delivery` fallback.
+  - `status_delivery` *(string, optional)* – delivery status; triggers timestamp sync for selected statuses.
+  - `status_site` *(string, optional)* – site status.
+  - `remark` *(string, optional)*.
+  - `photo` *(file, optional)* – uploaded image; stored via `app.storage.save_file`.
+  - `lng`, `lat` *(string/float, optional)* – coordinates.
+  - `updated_by` *(string, optional)* – operator/driver name. When submitted by an authenticated admin view caller, append `"(by username)"` to indicate the source.
+  - `phone_number` *(string, optional)* – driver contact.
+  - `duId`, `du_id` are ignored (legacy clients should use the fields above).
+- **Behavior notes:**
+  - Status strings are normalized. When the resulting value is in `ARRIVAL_STATUSES` or `DEPARTURE_STATUSES`, the corresponding ATA/ATD timestamp is written in both DB and Google Sheets.
+  - `updated_by` is trimmed; blank strings become `null`.
+  - Admin portal submissions should format `updated_by` as `"Driver Name (by alice)"`.
+  - When the DN has a known Google Sheet row, columns `status_delivery`, `status_site`, `issue_remark`, `driver_contact_name` (J column), and `driver_contact_number` (K column) are updated in Sheets with audit notes.
+- **Sample cURL request:**
+```bash
+curl -X POST "$BASE_URL/api/dn/update" \
+  -F 'dnNumber=DN001-20250101' \
+  -F 'status_delivery=On the way' \
+  -F 'status_site=Arrived' \
+  -F 'remark=Unloaded at gate' \
+  -F 'updated_by=Rudi (by alice)' \
+  -F 'phone_number=081234567890'
+```
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "id": 7051,
+  "photo": null,
+  "delivery_status_update_result": {
+    "updated": true,
+    "sheet": "Plan MOS Jan",
+    "row": 42,
+    "status_delivery_updated": true,
+    "status_site_updated": true,
+    "issue_remark_updated": true,
+    "driver_contact_name_updated": true,
+    "driver_contact_number_updated": true
+  }
+}
+```
+
+#### POST /api/dn/batch_update
+- **Description:** Create multiple DN master rows with default status history records.
+- **Request body (application/json):**
+```json
+{
+  "dn_numbers": [
+    "DN001-20250101",
+    "DN002-20250101"
+  ]
+}
+```
+- **Response example (200):**
+```json
+{
+  "status": "ok",
+  "success_count": 2,
+  "failure_count": 0,
+  "success_dn_numbers": ["DN001-20250101", "DN002-20250101"],
+  "failure_details": {}
+}
+```
+- **Failure cases:**
+  - Empty list -> `status: "fail", errmessage: "DN number 列表为空"`.
+  - Invalid DN format or duplicates populate `failure_details`.
+
+#### DELETE /api/dn/update/{id}
+- **Description:** Delete a single DN history record (table `dn_record`).
+- **Path parameters:**
+  - `id` *(integer, required)* – record identifier.
+- **Responses:**
+  - `200` when the record existed:
+```json
+{"ok": true}
+```
+  - `404` when the record is missing.
+
+#### DELETE /api/dn/{dn_number}
+- **Description:** Permanently remove a DN master row and all associated history records.
+- **Path parameters:**
+  - `dn_number` *(string, required)* – normalized DN identifier.
+- **Responses:**
+  - `200` with a summary of deleted data.
+```json
+{
+  "ok": true
+}
+```
+  - `404` if the DN does not exist.
+
+#### GET /api/dn/{dn_number}
+- **Description:** Fetch every history record (`dn_record`) for the given DN.
+- **Path parameters:** same as DELETE variant.
+- **Response example (200):**
+```json
+{
+  "ok": true,
   "items": [
     {
-      "dn_number": "DN001",
-      "status": "ON THE WAY",
+      "id": 7051,
+      "dn_number": "DN001-20250101",
       "status_delivery": "On the way",
-      "plan_mos_date": "01 Jan 25",
-      "lsp": "LSP Name",
-      ...
+      "status_site": "Arrived",
+      "remark": "Unloaded at gate",
+      "photo_url": null,
+      "lng": "106.8456",
+      "lat": "-6.2088",
+      "updated_by": "Rudi (by alice)",
+      "phone_number": "081234567890",
+      "created_at": "2025-01-12T08:12:34+07:00"
     }
   ]
 }
@@ -121,82 +219,626 @@ JakartaBackend 提供 RESTful API 用于物流配送单据 (DN) 管理和车辆�
 
 ---
 
-### 2. DN 高级搜索
+### Sheet synchronization
+
+#### POST /api/dn/sync
+- **Description:** Manually trigger Google Sheet → database synchronization.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "synced_count": 41,
+  "created_count": 8,
+  "updated_count": 29,
+  "ignored_count": 4,
+  "dn_numbers": ["DN001-20250101", "..."]
+}
+```
+- **Errors:** `500` if the sync job raises an exception (response includes `errorInfo` traceback).
+
+#### GET /api/dn/sync/log/latest
+- **Description:** Return the newest entry recorded in `dn_sync_log`.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "data": {
+    "id": 175,
+    "status": "completed",
+    "synced_count": 41,
+    "dn_numbers": ["DN001-20250101"],
+    "message": "Manual sync finished",
+    "error_message": null,
+    "error_traceback": null,
+    "created_at": "2025-01-12T08:20:10+07:00"
+  }
+}
+```
+
+#### GET /api/dn/sync/log/file
+- **Description:** Download the raw sync log file generated under `DN_SYNC_LOG_PATH`.
+- **Responses:**
+  - `200` → `text/plain` file download with `Content-Disposition: attachment`.
+  - `404` when the log file has never been written.
+
+---
+
+### Archive tooling
+
+#### POST /api/dn/archive
+- **Description:** Archive Plan MOS rows older than two days with delivery status `POD`, moving them to an `Archived YYYY-MM` worksheet while leaving active rows in place.
+- **Response example (200):**
+```json
+{
+  "threshold_date": "2025-01-10",
+  "processed": [
+    {"sheet": "Plan MOS Jan", "kept": 120, "archived": 18},
+    {"sheet": "Plan MOS Feb", "kept": 42, "archived": 0}
+  ]
+}
+```
+- **Errors:** `200` with `"error": "...message..."` when the Google API interaction fails.
+
+---
+
+### Delivery note listings
+
+#### GET /api/dn/list
+- **Description:** Return every active DN sorted by DN number.
+- **Query parameters:** None.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 512,
+      "dn_number": "DN001-20250101",
+      "created_at": "2025-01-02T09:00:00+07:00",
+      "status_delivery": "On the way",
+      "status_site": "Arrived",
+      "remark": "Waiting unloading",
+      "photo_url": null,
+      "lng": "106.8456",
+      "lat": "-6.2088",
+      "last_updated_by": "Rudi",
+      "gs_sheet": "Plan MOS Jan",
+      "gs_row": 42,
+      "gs_cell_url": "https://docs.google.com/...#gid=123&range=A42",
+      "is_deleted": "N",
+      "update_count": 3,
+      "driver_contact_number": "081234567890",
+      "plan_mos_date": "12 Jan 25",
+      "... dynamic columns ..."
+    }
+  ]
+}
+```
+- **Notes:** every sheet column (static + dynamic) is present on each row.
 
 #### GET /api/dn/list/search
+- **Description:** Multi-filter search with optional aggregation statistics.
+- **Query parameters:**
 
-支持多条件筛选的 DN 列表查询。
+| Name | Type | Description |
+|------|------|-------------|
+| `date` | list[str] | One or more Plan MOS dates (exact string matches, e.g. `"12 Jan 25"`). |
+| `dn_number` | list[str] | DN numbers (repeated or comma-separated). |
+| `du_id` | string | Filter by DU id (exact match). |
+| `phone_number` | string | Driver phone (whitespace trimmed). |
+| `status_delivery` | list[str] | Delivery statuses (case-insensitive). |
+| `status_site` | list[str] | Site statuses. |
+| `status_delivery_not_empty` | bool | `true` -> require non-empty delivery status. |
+| `status_site_not_empty` | bool | `true` -> require non-empty site status. |
+| `has_coordinate` | bool | `true` -> both lat & lng present; `false` -> missing coordinates. |
+| `show_deleted` | bool | Include soft-deleted rows when `true`. |
+| `lsp`, `region`, `area`, `status_wh`, `subcon`, `project_request`, `mos_type` | list[str] | Case-insensitive filters. |
+| `date_from`, `date_to` | datetime (ISO-8601) | Filter by last modification window (converted to GMT+7). |
+| `page` | int | Page number (ignored when `page_size=all`). |
+| `page_size` | int or `"all"` | Items per page (1-2000) or `"all"` to return the entire result set. |
 
-**查询参数**:
-- `dn_number` (string[], 可选): DN 号码筛选 (支持多个，可使用重复参数或逗号分隔)
-- `status` (string[], 可选): 状态筛选 (可多选)
-- `status_delivery` (string[], 可选): 配送状态筛选 (可多选)
-- `lsp` (string[], 可选): 物流服务商筛选 (可多选)
-- `region` (string[], 可选): 区域筛选 (可多选)
-- `date[]` (string[], 可选): 日期范围，格式 `["2025-01-01", "2025-01-31"]`
-- `status_not_empty` (boolean, 可选): 是否过滤空状态
-- `has_coordinate` (boolean, 可选): 是否有坐标信息
-- `show_deleted` (boolean, 可选): 是否显示已软删除的记录，默认 `false`
-- `page` (int, 可选): 页码，默认 1
-- `page_size` (int/string, 可选): 每页数量，默认 20，可设置为 `"all"` 获取所有记录
-
-**响应**:
+- **Response example (200):**
 ```json
 {
   "ok": true,
   "total": 45,
   "page": 1,
   "page_size": 20,
-  "items": [...]
+  "items": [
+    {
+      "dn_number": "DN001-20250101",
+      "status_delivery": "On the way",
+      "status_site": "Arrived",
+      "plan_mos_date": "12 Jan 25",
+      "latest_record_created_at": "2025-01-12T08:12:34+07:00",
+      "... other columns ..."
+    }
+  ],
+  "stats": {
+    "status_delivery": {
+      "On the way": 18,
+      "On Site": 12,
+      "POD": 15,
+      "Total": 45
+    },
+    "status_site": {
+      "Arrived": 27
+    },
+    "lsp_summary": [
+      {"lsp": "LSP A", "total_dn": 20, "status_not_empty": 17},
+      {"lsp": "LSP B", "total_dn": 25, "status_not_empty": 22}
+    ]
+  }
 }
 ```
 
-**新功能说明**:
+#### GET /api/dn/list/batch
+- **Description:** Fetch DN master rows for explicit DN numbers with pagination.
+- **Query parameters:**
+  - `dn_number` *(list[str], required)* – repeated or comma-separated.
+  - `page` *(int, default 1)*
+  - `page_size` *(int, default 20, max 100)*
+- **Response:** identical structure to `/list` but limited to the requested numbers.
 
-1. **软删除过滤** (`show_deleted`):
-   - `false` (默认): 只返回未删除的记录
-   - `true`: 返回所有记录，包括已软删除的记录 (`is_deleted = "Y"`)
-   - 用于管理员查看已删除数据或数据审计
+#### GET /api/dn/list/batch-by-du
+- **Description:** Paginated lookup by DU identifiers.
+- **Query parameters:**
+  - `du_id` *(list[str], required)*
+  - `page`, `page_size` – same semantics as above.
+- **Response:** same payload shape as `/list`.
 
-2. **无限分页** (`page_size="all"`):
-   - 设置 `page_size=all` 可获取所有匹配记录
-   - 自动将 `page` 设置为 1
-   - 最大限制 2000 条（超过需使用 `"all"`）
+#### GET /api/dn/list/early-bird
+- **Description:** List DNs that arrived before the configured cutoff (the “early bird” report).
+- **Query parameters:**
+  - `start_date`, `end_date` *(date, required)* – inclusive range (`YYYY-MM-DD`).
+  - `region`, `area`, `lsp` *(list[str], optional)* – filters (case-insensitive).
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "total": 3,
+  "start_date": "2025-01-01",
+  "end_date": "2025-01-07",
+  "data": [
+    {
+      "dn_id": 512,
+      "dn_number": "DN001-20250101",
+      "plan_mos_date": "12 Jan 25",
+      "plan_mos_date_iso": "2025-01-12",
+      "lsp": "LSP A",
+      "arrival_status": "ARRIVED AT SITE",
+      "arrived_at_site_time": "2025-01-12T07:55:00+07:00",
+      "cutoff_time": "2025-01-12T08:00:00+07:00",
+      "record_updated_by": "Rudi",
+      "record_phone_number": "081234567890"
+    }
+  ]
+}
+```
 
-**使用示例**:
-```bash
-# 显示已删除记录
-GET /api/dn/list/search?show_deleted=true
-
-# 获取所有 POD 状态的记录（包括已删除）
-GET /api/dn/list/search?status=POD&show_deleted=true&page_size=all
-
-# 标准查询（不含已删除）
-GET /api/dn/list/search?status=POD&page=1&page_size=20
-
-# 查询单个 DN 号码
-GET /api/dn/list/search?dn_number=JKT001-20241007
-
-# 查询多个 DN 号码（使用重复参数）
-GET /api/dn/list/search?dn_number=JKT001-20241007&dn_number=JKT002-20241007
-
-# 查询多个 DN 号码（使用逗号分隔）
-GET /api/dn/list/search?dn_number=JKT001-20241007,JKT002-20241007,JKT003-20241007
-
-# 组合多个 DN 号码与其他筛选条件
-GET /api/dn/list/search?dn_number=JKT001-20241007&dn_number=JKT002-20241007&status=Delivered&lsp=LSP-A
-
-# 混合重复参数和逗号分隔方式
-GET /api/dn/list/search?dn_number=JKT001-20241007,JKT002-20241007&dn_number=JKT003-20241007
+#### GET /api/dn/records
+- **Description:** Return every `dn_record` in reverse chronological order.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "total": 1205,
+  "items": [
+    {
+      "id": 7051,
+      "dn_number": "DN001-20250101",
+      "status_delivery": "On the way",
+      "remark": "Unloaded at gate",
+      "photo_url": null,
+      "lng": "106.8456",
+      "lat": "-6.2088",
+      "updated_by": "Rudi",
+      "created_at": "2025-01-12T08:12:34+07:00"
+    }
+  ]
+}
 ```
 
 ---
 
-### 3. DN 单个查询
+### Delivery note record search
 
-#### GET /api/dn/{dn_number}
+#### GET /api/dn/search
+- **Description:** Search delivery note history records with optional pagination.
+- **Query parameters:**
+  - `dn_number` *(string)* – exact DN (normalized); invalid format → `400`.
+  - `status_delivery`, `status_site` *(string)* – filter by status.
+  - `remark` *(string)* – substring match.
+  - `phone_number` *(string)* – trimmed before filtering.
+  - `has_photo` *(bool)* – require non-null photo URL.
+  - `date_from`, `date_to` *(datetime)* – range filter (ISO-8601).
+  - `page` *(int, default 1)*
+  - `page_size` *(int, optional)* – default returns all matches.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "total": 8,
+  "page": 1,
+  "page_size": 8,
+  "items": [
+    {
+      "dn_number": "DN001-20250101",
+      "status_delivery": "On the way",
+      "status_site": "Arrived",
+      "remark": "Unloaded at gate",
+      "updated_by": "Rudi",
+      "phone_number": "081234567890",
+      "created_at": "2025-01-12T08:12:34+07:00"
+    }
+  ]
+}
+```
 
-根据 DN 号码获取单个 DN 详情。
+#### GET /api/dn/batch
+- **Description:** Paginated history lookup for multiple DN numbers.
+- **Query parameters:**
+  - `dn_number` *(list[str], optional)* – repeated or comma-separated.
+  - `dnnumber` *(list[str], optional)* – legacy alias.
+  - `page`, `page_size` *(int, defaults 1 & 20)*
+- **Response:** same structure as `/api/dn/search`.
+
+---
+
+### Export endpoints
+
+#### GET /api/dn/export/details
+- **Description:** Return the master DN row and every historical record for each requested DN.
+- **Query parameters:**
+  - `dn_number` *(list[str], required)* – repeated or comma-separated.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "count": 2,
+  "data": [
+    {
+      "dn_number": "DN001-20250101",
+      "dn": {
+        "id": 512,
+        "dn_number": "DN001-20250101",
+        "plan_mos_date": "12 Jan 25",
+        "driver_contact_number": "081234567890",
+        "created_at": "2025-01-02T02:00:00+07:00",
+        "...": "..."
+      },
+      "records": [
+        {
+          "id": 7051,
+          "status_delivery": "On the way",
+          "remark": "Unloaded at gate",
+          "updated_by": "Rudi",
+          "created_at": "2025-01-12T08:12:34+07:00"
+        }
+      ]
+    }
+  ],
+  "not_found_dn_numbers": ["DN003-20250101"]
+}
+```
+
+#### GET /api/dn/export/details-pdf
+- **Description:** Generate a PDF summarizing DN master data and history records (requires `MAPBOX_ACCESS_TOKEN` for map snapshots).
+- **Query parameters:** identical to the JSON variant.
+- **Responses:**
+  - `200` – `application/pdf` with `Content-Disposition: attachment; filename="dn-details-YYYYMMDDHHMMSS.pdf"`.
+  - `404` – when none of the requested DNs have data.
+  - `500` – when Mapbox credentials are missing.
+- **Headers:** `X-Not-Found-DN` lists missing numbers (URL encoded) when partial results exist.
+
+#### GET /api/dn/early-bird/export
+- **Description:** Export the Early Bird report (same filters as `/list/early-bird`) to PDF.
+- **Query parameters:** `start_date`, `end_date`, `region`, `area`, `lsp`.
+- **Responses:** identical semantics to `/export/details-pdf`.
+
+---
+
+### Statistics & filters
+
+#### GET /api/dn/stats/{date}
+- **Description:** Count DNs by status delivery for a specific Plan MOS date string (e.g. `"12 Jan 25"`).
+- **Path parameter:** `date` *(string, required)* – raw Plan MOS text.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "group": "Total",
+      "date": "12 Jan 25",
+      "values": [18, 12, 15, 45]
+    }
+  ]
+}
+```
+- **Notes:** `values` aligns with the canonical status ordering plus overall total.
+
+#### GET /api/dn/filters
+- **Description:** Fetch cached distinct values for filters (LSPs, Regions, Areas, etc.).
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "data": {
+    "dn_numbers": ["DN001-20250101"],
+    "lsp": ["LSP A", "LSP B"],
+    "region": ["Jabodetabek"],
+    "total": 532
+  }
+}
+```
+
+#### GET /api/dn/status-delivery/lsp-summary-records
+- **Description:** Retrieve historical snapshots of LSP delivery status coverage plus hourly update aggregates.
+- **Query parameters:**
+  - `lsp` *(string, optional)* – exact match filter.
+  - `limit` *(int, default 5000, max 10000)* – maximum snapshot rows.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "data": {
+    "by_plan_mos_date": [
+      {
+        "id": 12,
+        "lsp": "LSP A",
+        "total_dn": 45,
+        "status_not_empty": 39,
+        "plan_mos_date": "12 Jan 25",
+        "recorded_at": "2025-01-12T20:00:00+07:00"
+      }
+    ],
+    "by_update_date": [
+      {
+        "id": 1,
+        "lsp": "LSP A",
+        "updated_dn": 5,
+        "update_date": "12 Jan 25",
+        "recorded_at": "2025-01-12 08:00:00"
+      }
+    ]
+  }
+}
+```
+
+#### GET /api/dn/status_delivery/by-driver
+- **Description:** Summarize driver performance by phone number using unique DN and `(DN, status)` counts.
+- **Query parameters:**
+  - `phone_number` *(string, optional)* – when present, returns stats for a single driver.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "phone_number": "081234567890",
+      "unique_dn_count": 12,
+      "record_count": 18
+    },
+    {
+      "phone_number": "089876543210",
+      "unique_dn_count": 7,
+      "record_count": 7
+    }
+  ],
+  "total_drivers": 2
+}
+```
+
+---
+
+## Vehicle APIs (`/api/vehicle`)
+
+All vehicle endpoints normalize license plates (uppercased, whitespace removed) before validation.
+
+#### POST /api/vehicle/signin
+- **Description:** Register or update a vehicle’s arrival at the site.
+- **Request body (application/json):**
+```json
+{
+  "vehiclePlate": "B 1234 XYZ",
+  "LSP": "LSP A",
+  "vehicleType": "CDE Truck",
+  "driverName": "Andi",
+  "contactNumber": "0812121212",
+  "arriveTime": "2025-01-12T07:45:00+07:00"
+}
+```
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "vehicle": {
+    "vehiclePlate": "B1234XYZ",
+    "vehicleType": "CDE Truck",
+    "driverName": "Andi",
+    "contactNumber": "0812121212",
+    "LSP": "LSP A",
+    "status": "arrived",
+    "arriveTime": "2025-01-12T07:45:00+07:00",
+    "departTime": null,
+    "createdAt": "2025-01-12T07:45:00+07:00",
+    "updatedAt": "2025-01-12T07:45:00+07:00"
+  }
+}
+```
+- **Validation failures:** `400` with `vehicle_plate_required` or `lsp_required`.
+
+#### POST /api/vehicle/depart
+- **Description:** Mark a vehicle as departed and capture an optional timestamp.
+- **Request body (application/json):**
+```json
+{
+  "vehiclePlate": "B 1234 XYZ",
+  "departTime": "2025-01-12T09:15:00+07:00"
+}
+```
+- **Responses:**
+  - `200` with the updated vehicle payload (status becomes `"departed"`).
+  - `404` when the vehicle has not signed in.
+
+#### GET /api/vehicle/vehicle
+- **Description:** Fetch a single vehicle by plate.
+- **Query parameters:** `vehiclePlate` *(string, required)*.
+- **Response example (200):** same structure as the sign-in response.
+- **Errors:** `404` when no record exists.
+
+#### GET /api/vehicle/vehicles
+- **Description:** List vehicles filtered by status and/or date.
+- **Query parameters:**
+  - `status` *(string, optional)* – `arrived` or `departed`.
+  - `date` *(string, optional)* – filter by Jakarta calendar day (`YYYY-MM-DD`). Applies to arrival time unless `status=departed`.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "vehicles": [
+    {
+      "vehiclePlate": "B1234XYZ",
+      "status": "departed",
+      "arriveTime": "2025-01-12T07:45:00+07:00",
+      "departTime": "2025-01-12T09:15:00+07:00",
+      "...": "..."
+    }
+  ]
+}
+```
+- **Errors:** `400` for invalid status or date format.
+
+---
+
+## PM Inventory APIs (`/api/pm`)
+
+These endpoints manage PM locations and DN inventory.
+
+#### POST /api/pm/create-pm
+- **Description:** Create a PM location or return the existing entry (case-insensitive match).
+- **Request body (application/json):**
+```json
+{
+  "pm_name": "PM Alpha",
+  "lng": "106.8200",
+  "lat": "-6.1700"
+}
+```
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "created": true,
+  "pm": {
+    "id": 5,
+    "pm_name": "PM Alpha",
+    "lng": "106.8200",
+    "lat": "-6.1700"
+  }
+}
+```
+- **Errors:** `422` (validation) when `pm_name` is blank.
+
+#### GET /api/pm/list_pm
+- **Description:** List all PM locations.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "total": 2,
+  "items": [
+    {"id": 5, "pm_name": "PM Alpha", "lng": "106.8200", "lat": "-6.1700"},
+    {"id": 6, "pm_name": "PM Beta", "lng": null, "lat": null}
+  ]
+}
+```
+
+#### POST /api/pm/inbound
+- **Description:** Register a DN as inbound to the specified PM (status becomes `"in"`).
+- **Request body (application/json):**
+```json
+{
+  "pm_name": "PM Alpha",
+  "dn_number": "DN001-20250101"
+}
+```
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "record": {
+    "id": 91,
+    "pm_name": "PM Alpha",
+    "dn_number": "DN001-20250101",
+    "status": "in",
+    "in_time": "2025-01-12T08:30:00"
+  }
+}
+```
+- **Errors:** `400` with message from validation (e.g. invalid DN or PM).
+
+#### POST /api/pm/outbound
+- **Description:** Mark the latest inbound record for the DN as outbound (`status="out"`).
+- **Request body:** same shape as `/inbound`.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "record": {
+    "id": 91,
+    "pm_name": "PM Alpha",
+    "dn_number": "DN001-20250101",
+    "status": "out",
+    "out_time": "2025-01-12T11:05:00"
+  }
+}
+```
+- **Errors:** `404` when no inbound record is available to close.
+
+#### GET /api/pm/find_dn
+- **Description:** Identify which PM currently holds a DN (latest inbound record without outbound).
+- **Query parameters:** `dn_number` *(string, required)*.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "pm": {
+    "pm_name": "PM Alpha",
+    "in_time": "2025-01-12T08:30:00"
+  }
+}
+```
+- **When not found:** `{"ok": true, "pm": null}`.
+
+#### GET /api/pm/inventory
+- **Description:** List all DN numbers currently stored at a PM.
+- **Query parameters:** `pm_name` *(string, required)*.
+- **Response example (200):**
+```json
+{
+  "ok": true,
+  "pm_name": "PM Alpha",
+  "total": 2,
+  "items": [
+    {"id": 91, "dn_number": "DN001-20250101", "in_time": "2025-01-12T08:30:00"},
+    {"id": 94, "dn_number": "DN004-20250101", "in_time": null}
+  ]
+}
+```
+
+---
+
+## Error handling quick reference
+
+| HTTP | Typical causes | Body |
+|------|----------------|------|
+| 400  | Validation errors (invalid DN, missing required fields, inconsistent filters). | `{"detail": "..."}`
+| 404  | Resource not found (DN record, vehicle, PM inventory entry). | `{"detail": "..."}`
+| 500  | Unexpected exceptions (Google API errors, sync failures, missing Mapbox token). | `{"ok": false, "error": "...", "errorInfo": "...stack..."}` |
+
+The backend does not implement authentication or rate limiting. Integrate it behind your API gateway if those features are required.
 
 **路径参数**:
 - `dn_number` (string): DN 号码
