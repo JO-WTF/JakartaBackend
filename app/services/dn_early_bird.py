@@ -144,7 +144,7 @@ def collect_early_bird_results(
             continue
 
         updater = (record.updated_by or "").strip().lower()
-        if updater != "driver":
+        if updater.contains("By("):
             continue
 
         priority = 0 if raw_status == "ARRIVED AT SITE" else 1
