@@ -9,7 +9,7 @@ from typing import Dict, Iterable, Optional, Sequence
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.constants import EARLY_BIRD_AREA_THRESHOLDS
+from app.constants import EARLY_BIRD_AREA_THRESHOLDS, EARLY_BIRD_AREA_THRESHOLDS_AFTER_NOV_9
 from app.models import DN, DNRecord
 from app.utils.time import TZ_GMT7, parse_plan_mos_date
 
@@ -45,11 +45,23 @@ def _build_filter_set(values: Optional[Sequence[str]], normalizer) -> Optional[s
     return filtered or None
 
 
-def _get_area_threshold(area: Optional[str]) -> Optional[int]:
+def _get_area_threshold(area: Optional[str], plan_date: date) -> Optional[int]:
+    """Get area threshold based on plan_mos_date.
+    
+    For DNs with plan_mos_date on or before 2025-11-09, use EARLY_BIRD_AREA_THRESHOLDS.
+    For DNs with plan_mos_date on or after 2025-11-09, use EARLY_BIRD_AREA_THRESHOLDS_AFTER_NOV_9.
+    """
     normalized = _normalize_area_label(area)
     if not normalized:
         return None
-    return EARLY_BIRD_AREA_THRESHOLDS.get(normalized)
+    
+    # Cutoff date: 2025-11-09
+    cutoff_date = date(2025, 11, 9)
+    
+    if plan_date >= cutoff_date:
+        return EARLY_BIRD_AREA_THRESHOLDS_AFTER_NOV_9.get(normalized)
+    else:
+        return EARLY_BIRD_AREA_THRESHOLDS.get(normalized)
 
 
 def _to_jakarta(dt: Optional[datetime]) -> Optional[datetime]:
@@ -104,7 +116,7 @@ def collect_early_bird_results(
         if lsp_filter_set is not None and lsp_value not in lsp_filter_set:
             continue
 
-        threshold_hour = _get_area_threshold(area_value_raw)
+        threshold_hour = _get_area_threshold(area_value_raw, plan_date)
         if threshold_hour is None:
             continue
 
