@@ -1,10 +1,10 @@
 """DN driver check-in endpoints."""
 
 from __future__ import annotations
-
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-
+from app.utils.logging import logger
 from app.services.dn_checkins import DNCheckinError, create_dn_checkin
 
 router = APIRouter(prefix="/api/dn")
@@ -31,6 +31,7 @@ class DNCheckinRequest(BaseModel):
 async def create_checkin_endpoint(payload: DNCheckinRequest):
     try:
         response = await create_dn_checkin(payload.model_dump())
+        logger.info(json.dumps(response))
     except DNCheckinError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

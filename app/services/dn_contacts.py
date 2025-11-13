@@ -108,7 +108,7 @@ async def get_dn_contact_info(dn_number: str) -> DNContactInfo:
         raise RuntimeError("DN contact service response is invalid")
 
     if _is_no_data_payload(data):
-        logger.warning("DN contact lookup returned no data", extra={"dn_number": dn_number})
+        logger.warning(f"DN {dn_number} contact lookup returned no data")
         message = _extract_error_message(data) or "DN contact service returned no data"
         raise RuntimeError(message)
 

@@ -33,8 +33,6 @@ async def create_dn_checkin(payload: Mapping[str, Any]) -> dict[str, Any]:
                 json=dict(payload),
                 headers=headers,
             )
-            import json
-            logger.info(json.dumps(response.json()))
     except httpx.RequestError as exc:
         logger.exception("DN check-in request failed", extra={"payload": payload})
         raise DNCheckinError("Unable to reach DN check-in service") from exc
