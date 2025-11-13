@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, List, Optional
 import json
 from datetime import datetime
 from app.utils.logging import logger
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.constants import (
@@ -23,8 +23,9 @@ from app.crud import (
     get_existing_dn_numbers,
     _ACTIVE_DN_EXPR,
 )
-from app.db import get_db
+from app.db import get_db, SessionLocal
 from app.models import DN
+from app.services.dn_checkins import DNCheckinError, create_dn_checkin
 from app.storage import save_file
 from app.utils.string import normalize_dn
 from app.utils.time import TZ_GMT7
@@ -42,8 +43,66 @@ def _format_log_entries(entries: dict[str, Any]) -> str:
     return "; ".join(f"{key} = {value!r}" for key, value in entries.items()) + ";"
 
 
+async def _run_post_update_tasks(
+    *,
+    dn_number: str,
+    status_delivery: str | None,
+    status_site: str | None,
+    remark: str | None,
+    updated_by_value: str | None,
+    phone_number_value: str | None,
+    gs_sheet_name: str | None,
+    gs_row_index: Optional[int],
+    dn_row_id: Optional[int],
+    checkin_payload: dict[str, Any] | None,
+) -> None:
+    should_check_sheet = (
+        gs_sheet_name and isinstance(gs_row_index, int) and gs_row_index > 0 and status_delivery is not None
+    )
+
+    if should_check_sheet:
+        try:
+            gpread_result = sync_dn_record_to_sheet(
+                gs_sheet_name,  # type: ignore[arg-type]
+                gs_row_index,  # type: ignore[arg-type]
+                dn_number,
+                status_delivery,
+                status_site,
+                remark,
+                updated_by_value,
+                phone_number_value,
+            )
+            logger.info("Google Sheet update result: %s", json.dumps(gpread_result))
+            corrected_row: Optional[int] = None
+            if isinstance(gpread_result, dict):
+                if isinstance(gpread_result.get("row_corrected"), int):
+                    corrected_row = gpread_result["row_corrected"]
+                elif isinstance(gpread_result.get("row"), int):
+                    corrected_row = gpread_result["row"]
+
+            if corrected_row is not None and dn_row_id is not None:
+                with SessionLocal() as bg_db:
+                    dn_row = bg_db.query(DN).filter(DN.id == dn_row_id).one_or_none()
+                    if dn_row is not None:
+                        if getattr(dn_row, "gs_row", None) != corrected_row:
+                            dn_row.gs_row = corrected_row
+                        if gs_sheet_name and getattr(dn_row, "gs_sheet", None) != gs_sheet_name:
+                            dn_row.gs_sheet = gs_sheet_name
+                        bg_db.add(dn_row)
+                        bg_db.commit()
+        except Exception:
+            logger.exception("Failed to sync DN record to Google Sheet", extra={"dn_number": dn_number})
+
+    if checkin_payload:
+        try:
+            await create_dn_checkin(checkin_payload)
+        except DNCheckinError:
+            logger.exception("Failed to sync DN update to check-in service", extra={"dn_number": dn_number})
+
+
 @router.post("/update")
-def update_dn(
+async def update_dn(
+    background_tasks: BackgroundTasks,
     dnNumber: str = Form(...),
     status: str | None = Form(None, description="legacy 状态字段，可选"),
     status_delivery: str | None = Form(None, description="配送状态，可选"),
@@ -170,60 +229,35 @@ def update_dn(
         updated_by=updated_by_value,
         phone_number=phone_number_value,
     )
+    logger.info(f"Added DN record: {dn_number}")
 
-    gspread_update_result: dict[str, Any] | None = None
-    gspread_timestamp_result: dict[str, Any] | None = None
-    should_check_sheet = (
-        gs_sheet_name and isinstance(gs_row_index, int) and gs_row_index > 0 and status_delivery is not None
+    checkin_payload = {
+        "dn_id": dn_number,
+        "status": (status_delivery or status or "").strip(),
+        "driver_name": updated_by_value or "",
+        "driver_phone": phone_number_value or "",
+        "check_in_time": datetime.now(TZ_GMT7).strftime("%Y-%m-%d %H:%M:%S"),
+        "longitude": lng_val or "",
+        "latitude": lat_val or "",
+    }
+    if photo_url:
+        checkin_payload["photo_url"] = photo_url
+
+    background_tasks.add_task(
+        _run_post_update_tasks,
+        dn_number=dn_number,
+        status_delivery=status_delivery,
+        status_site=status_site,
+        remark=remark,
+        updated_by_value=updated_by_value,
+        phone_number_value=phone_number_value,
+        gs_sheet_name=gs_sheet_name,
+        gs_row_index=gs_row_index,
+        dn_row_id=getattr(dn_row, "id", None),
+        checkin_payload=checkin_payload,
     )
 
-    if should_check_sheet:
-        logger.info("Syncing DN record to Google Sheet %s %d", gs_sheet_name, gs_row_index)
-        gpread_result = sync_dn_record_to_sheet(
-            gs_sheet_name,
-            gs_row_index,
-            dn_number,
-            status_delivery,
-            status_site,
-            remark,
-            updated_by_value,
-            phone_number_value,
-        )
-        logger.info("Google Sheet update result: %s", json.dumps(gpread_result))
-        # preserve original var name used later
-        gspread_update_result = gpread_result
-
-        # If Google Sheet search corrected the DN row, persist it immediately
-        try:
-            if gpread_result and isinstance(gpread_result, dict):
-                corrected_row = None
-                # sync_dn_record_to_sheet sets 'row_corrected' when it finds the correct row
-                if "row_corrected" in gpread_result and isinstance(gpread_result["row_corrected"], int):
-                    corrected_row = gpread_result["row_corrected"]
-                # fallback to 'row' which represents the row used
-                elif "row" in gpread_result and isinstance(gpread_result["row"], int):
-                    corrected_row = gpread_result["row"]
-
-                if corrected_row is not None and dn_row is not None:
-                    # Update DN.gs_row and gs_sheet if changed
-                    if getattr(dn_row, "gs_row", None) != corrected_row:
-                        dn_row.gs_row = corrected_row
-                        # ensure gs_sheet is set as well
-                        if gs_sheet_name:
-                            dn_row.gs_sheet = gs_sheet_name
-                        db.add(dn_row)
-                        db.commit()
-        except Exception:
-            # Don't fail the API if persisting gs_row fails; include info in response instead
-            # (we simply ignore persistence errors here)
-            pass
-
-    response: dict[str, Any] = {"ok": True, "id": rec.id, "photo": photo_url}
-    if gspread_update_result is not None:
-        response["delivery_status_update_result"] = gspread_update_result
-    if gspread_timestamp_result is not None:
-        response["timestamp_update_result"] = gspread_timestamp_result
-    return response
+    return {"ok": True, "id": rec.id, "photo": photo_url}
 
 
 @router.post("/batch_update")

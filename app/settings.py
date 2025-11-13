@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     google_spreadsheet_url: str = os.getenv("GOOGLE_SPREADSHEET_URL", "")
     google_service_account_credentials: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS")
     mapbox_access_token: str | None = os.getenv("MAPBOX_ACCESS_TOKEN")
+    dn_contacts_api_url: str = os.getenv("DN_CONTACTS_API_URL", "")
+    dn_contacts_api_base_url: str = os.getenv("DN_CONTACTS_API_BASE_URL", "")
+    dn_contacts_api_path: str = os.getenv("DN_CONTACTS_API_PATH", "/api/iro/xls/dn/contacts")
+    dn_checkins_api_url: str = os.getenv("DN_CHECKINS_API_URL", "")
+    dn_checkins_api_base_url: str = os.getenv("DN_CHECKINS_API_BASE_URL", "")
+    dn_checkins_api_path: str = os.getenv("DN_CHECKINS_API_PATH", "/api/iro/xls/dn/checkins")
+    dn_contacts_hw_id: str = os.getenv("DN_CONTACTS_HW_ID", "")
+    dn_contacts_app_key: str = os.getenv("DN_CONTACTS_APP_KEY", "")
+    dn_contacts_timeout: float = float(os.getenv("DN_CONTACTS_TIMEOUT", "10"))
 
     @field_validator("allowed_origins", mode="after")
     @classmethod
@@ -56,3 +65,28 @@ if url.split(":", 1)[0].startswith("postgres") and "sslmode=" not in url:
     url += ("&" if "?" in url else "?") + "sslmode=require"
 
 settings.database_url = url
+
+if not settings.dn_contacts_api_url:
+    base = settings.dn_contacts_api_base_url.strip()
+    if not base:
+        raise RuntimeError("Missing DN_CONTACTS_API_URL or DN_CONTACTS_API_BASE_URL")
+    path = (settings.dn_contacts_api_path or "").strip()
+    if path and not path.startswith("/"):
+        path = "/" + path
+    settings.dn_contacts_api_url = base.rstrip("/") + (path or "")
+
+if not settings.dn_contacts_hw_id or not settings.dn_contacts_app_key:
+    raise RuntimeError("Missing DN_CONTACTS_HW_ID or DN_CONTACTS_APP_KEY")
+
+if not settings.dn_checkins_api_url:
+    base_candidates = [
+        settings.dn_checkins_api_base_url.strip(),
+        settings.dn_contacts_api_base_url.strip(),
+    ]
+    base = next((candidate for candidate in base_candidates if candidate), "")
+    if not base:
+        raise RuntimeError("Missing DN_CHECKINS_API_URL or DN_CHECKINS_API_BASE_URL")
+    path = (settings.dn_checkins_api_path or "").strip()
+    if path and not path.startswith("/"):
+        path = "/" + path
+    settings.dn_checkins_api_url = base.rstrip("/") + (path or "")
