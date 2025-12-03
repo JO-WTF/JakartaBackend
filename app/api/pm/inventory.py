@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.schemas.pm import PMCreate, DNAction, DNQuery, PMInventoryQuery
+from app.schemas.pm import PMCreate, DNAction, DNQuery, PMInventoryQuery, PMDelete
 from app import crud
 
 router = APIRouter()
@@ -20,6 +20,20 @@ def create_pm(payload: PMCreate, db: Session = Depends(get_db)):
     pm = crud.create_pm(db, pm_name=pm_name_value, lng=payload.lng, lat=payload.lat)
     created = pm and pm.pm_name.lower() == pm_name_value.lower()
     return {"ok": True, "created": created, "pm": {"id": pm.id, "pm_name": pm.pm_name, "lng": pm.lng, "lat": pm.lat}}
+
+
+@router.delete("/delete-pm")
+def delete_pm(payload: PMDelete, db: Session = Depends(get_db)):
+    """Delete a PM entry by name (case-insensitive)."""
+    try:
+        deleted = crud.delete_pm(db, pm_name=payload.pm_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="pm not found")
+
+    return {"ok": True, "deleted": True}
 
 
 @router.get("/list_pm")

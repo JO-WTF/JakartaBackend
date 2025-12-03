@@ -626,6 +626,23 @@ def list_pm_inventory(db: Session, pm_name: str) -> list[PMInventory]:
     return records
 
 
+def delete_pm(db: Session, pm_name: str) -> bool:
+    """Delete a PM by case-insensitive name. Returns True when a row was removed."""
+    if not pm_name or not isinstance(pm_name, str):
+        raise ValueError("pm_name is required")
+    name = unicodedata.normalize("NFC", pm_name).strip()
+    if not name:
+        raise ValueError("pm_name is required")
+
+    pm_row = db.query(PM).filter(func.lower(PM.pm_name) == name.lower()).one_or_none()
+    if pm_row is None:
+        return False
+
+    db.delete(pm_row)
+    db.commit()
+    return True
+
+
 def get_existing_dn_numbers(db: Session, dn_numbers: Iterable[str]) -> Set[str]:
     unique_numbers = {dn_number for dn_number in dn_numbers if dn_number}
     if not unique_numbers:

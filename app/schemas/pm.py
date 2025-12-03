@@ -20,6 +20,17 @@ class PMCreate(BaseModel):
         return v
 
 
+class PMDelete(BaseModel):
+    pm_name: str = Field(..., min_length=1)
+
+    @validator("pm_name")
+    def strip_pm_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("pm_name required")
+        return v
+
+
 class DNAction(BaseModel):
     pm_name: str = Field(..., min_length=1)
     dn_number: str = Field(...)
