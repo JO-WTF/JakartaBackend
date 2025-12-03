@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import router as api_router
+from app.core.aging_orders import scheduled_aging_orders_sheet_sync
 from app.core.sync import scheduled_dn_sheet_sync
 from app.core.status_delivery_summary import (
     scheduled_status_delivery_lsp_summary_capture,
@@ -58,7 +59,9 @@ app.include_router(api_router)
 _scheduler: AsyncIOScheduler | None = None
 _SHEET_SYNC_JOB_ID = "dn_sheet_sync"
 _LSP_SUMMARY_JOB_ID = "status_delivery_lsp_summary"
+_AGING_ORDERS_SYNC_JOB_ID = "aging_orders_sheet_sync"
 SHEET_SYNC_INTERVAL_SECONDS = 300
+AGING_ORDERS_SYNC_INTERVAL_SECONDS = 60
 
 
 @app.exception_handler(Exception)
@@ -77,6 +80,14 @@ async def _start_scheduler() -> None:
         scheduled_dn_sheet_sync,
         trigger=IntervalTrigger(seconds=SHEET_SYNC_INTERVAL_SECONDS),
         id=_SHEET_SYNC_JOB_ID,
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=5),
+    )
+    _scheduler.add_job(
+        scheduled_aging_orders_sheet_sync,
+        trigger=IntervalTrigger(seconds=AGING_ORDERS_SYNC_INTERVAL_SECONDS),
+        id=_AGING_ORDERS_SYNC_JOB_ID,
         max_instances=1,
         coalesce=True,
         next_run_time=datetime.utcnow() + timedelta(seconds=5),

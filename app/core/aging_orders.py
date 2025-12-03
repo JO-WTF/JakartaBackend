@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
@@ -20,6 +21,7 @@ from app.db import SessionLocal
 
 __all__ = [
     "sync_aging_orders_sheet_to_db",
+    "scheduled_aging_orders_sheet_sync",
     "update_pm_location_by_order_name",
     "update_pm_location_in_sheets",
     "run_pm_location_sheet_updates",
@@ -576,3 +578,30 @@ def update_pm_location_by_order_name(
         sheet_updates_scheduled=skip_sheet_updates,
         created_row_pending_sheet=False,
     )
+
+
+def sync_aging_orders_sheet_with_new_session() -> dict[str, int]:
+    """Sync Aging Orders sheet using a fresh DB session."""
+    db = SessionLocal()
+    try:
+        return sync_aging_orders_sheet_to_db(db)
+    finally:
+        db.close()
+
+
+async def scheduled_aging_orders_sheet_sync() -> None:
+    """Background-friendly Aging Orders sync runner for the scheduler."""
+    try:
+        stats = await asyncio.to_thread(sync_aging_orders_sheet_with_new_session)
+    except RuntimeError as exc:
+        logger.warning("Scheduled Aging Orders sheet sync skipped: %s", exc)
+    except Exception:
+        logger.exception("Scheduled Aging Orders sheet sync failed")
+    else:
+        logger.info(
+            "Scheduled Aging Orders sheet sync completed (created=%d, updated=%d, soft_deleted=%d, total=%d)",
+            stats.get("created", 0),
+            stats.get("updated", 0),
+            stats.get("soft_deleted", 0),
+            stats.get("total", 0),
+        )
