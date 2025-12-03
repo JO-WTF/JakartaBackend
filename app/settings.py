@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     storage_base_url: str = os.getenv("STORAGE_BASE_URL", "")
     google_api_key: str | None = os.getenv("GOOGLE_API_KEY")
     google_spreadsheet_url: str = os.getenv("GOOGLE_SPREADSHEET_URL", "")
+    aging_orders_spreadsheet_url: str = os.getenv("AGING_ORDERS_SPREADSHEET_URL", "")
     google_service_account_credentials: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS")
     mapbox_access_token: str | None = os.getenv("MAPBOX_ACCESS_TOKEN")
     dn_contacts_api_url: str = os.getenv("DN_CONTACTS_API_URL", "")

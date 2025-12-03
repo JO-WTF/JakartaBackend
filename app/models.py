@@ -1,5 +1,5 @@
 import json
-from sqlalchemy import Column, String, Integer, DateTime, Text, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, Text, UniqueConstraint, Boolean
 from sqlalchemy.sql import func
 from .db import Base
 
@@ -144,3 +144,36 @@ class StatusDeliveryLspStat(Base):
     plan_mos_date = Column(String(32), nullable=False)
     recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AgingOrder(Base):
+    __tablename__ = "aging_order"
+    __table_args__ = (
+        UniqueConstraint("shipment_no", name="uq_aging_order_shipment_no"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    shipment_no = Column(String(128), nullable=False, index=True)
+    order_name = Column(Text, nullable=True)
+    shipment_status = Column(Text, nullable=True)
+    source_location = Column(Text, nullable=True)
+    destination_location = Column(Text, nullable=True)
+    service_provider = Column(Text, nullable=True)
+    insert_time = Column(Text, nullable=True)
+    ata = Column(Text, nullable=True)
+    global_pod_cycle_statistic = Column(Text, nullable=True)
+    period = Column(Text, nullable=True)
+    pm_location = Column(Text, nullable=True)
+    last_status = Column(Text, nullable=True)
+    remark = Column(Text, nullable=True)
+    sheet_title = Column(Text, nullable=True)
+    sheet_row = Column(Integer, nullable=True)
+    sheet_cell = Column(String(32), nullable=True)
+    is_deleted = Column(Boolean, nullable=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

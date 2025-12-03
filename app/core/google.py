@@ -12,10 +12,11 @@ import gspread
 from app.settings import settings
 from app.utils.logging import logger
 
-__all__ = ["create_gspread_client", "SPREADSHEET_URL", "GS_KEY_PATH", "make_gs_cell_url"]
+__all__ = ["create_gspread_client", "SPREADSHEET_URL", "AGING_ORDERS_SPREADSHEET_URL", "GS_KEY_PATH", "make_gs_cell_url"]
 
 GS_KEY_PATH = Path("/etc/secrets/gskey.json")
 SPREADSHEET_URL = settings.google_spreadsheet_url
+AGING_ORDERS_SPREADSHEET_URL = settings.aging_orders_spreadsheet_url
 
 _SERVICE_ACCOUNT_INFO: dict[str, Any] | None = None
 
