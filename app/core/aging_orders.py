@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.google import AGING_ORDERS_SPREADSHEET_URL, create_gspread_client
 from app.models import AgingOrder
 from app.utils.logging import logger
+from app.utils.time import to_gmt7_iso
 from app.db import SessionLocal
 
 __all__ = [
@@ -149,8 +150,8 @@ def _generate_unknown_shipment_no(order_name: str) -> str:
     return f"UNKNOWN-{prefix}-{uuid4().hex[:6]}"
 
 
-def _append_order_to_unknown_sheet(order_name: str, pm_value: str, shipment_no: str) -> Tuple[str, int, str] | None:
-    """Append a new row to the Unknown worksheet. Returns (sheet_title, row_index, sheet_cell) or None."""
+def _append_order_to_unknown_sheet(order_name: str, pm_value: str, shipment_no: str) -> Tuple[str, int, str, str] | None:
+    """Append a new row to the Unknown worksheet. Returns (sheet_title, row_index, sheet_cell, insert_time) or None."""
     if not AGING_ORDERS_SPREADSHEET_URL:
         logger.warning("Skipping Unknown sheet append: missing AGING_ORDERS_SPREADSHEET_URL")
         return None
@@ -168,6 +169,7 @@ def _append_order_to_unknown_sheet(order_name: str, pm_value: str, shipment_no: 
         header_index = {header: idx for idx, header in enumerate(normalized_headers)}
 
         row_values = [""] * len(headers)
+        insert_time_value = to_gmt7_iso(datetime.utcnow().replace(microsecond=0)) or ""
 
         def set_value(header_key: str, value: str | None) -> None:
             idx = header_index.get(header_key)
@@ -177,6 +179,7 @@ def _append_order_to_unknown_sheet(order_name: str, pm_value: str, shipment_no: 
         set_value("shipment no", shipment_no)
         set_value("order name", order_name)
         set_value("pm location", pm_value)
+        set_value("insert time", insert_time_value)
 
         # Determine the row index that will be used for appending
         current_rows = len(worksheet.get_all_values())
@@ -187,7 +190,7 @@ def _append_order_to_unknown_sheet(order_name: str, pm_value: str, shipment_no: 
         shipment_col_idx = header_index.get("shipment no", 0)
         sheet_cell = rowcol_to_a1(target_row_index, shipment_col_idx + 1)
 
-        return worksheet.title, target_row_index, sheet_cell
+        return worksheet.title, target_row_index, sheet_cell, insert_time_value
     except Exception as exc:  # pragma: no cover - gspread runtime errors
         logger.warning("Failed to append aging order to Unknown sheet: %s", exc)
         return None
@@ -229,10 +232,11 @@ def run_pm_location_sheet_updates(
 
                 sheet_info = _append_order_to_unknown_sheet(normalized_order, normalized_pm, shipment_no)
                 if sheet_info:
-                    sheet_title, sheet_row, sheet_cell = sheet_info
+                    sheet_title, sheet_row, sheet_cell, insert_time_value = sheet_info
                     row.sheet_title = sheet_title
                     row.sheet_row = sheet_row
                     row.sheet_cell = sheet_cell
+                    row.insert_time = insert_time_value
                     db.add(row)
                     db.commit()
                 return
@@ -531,10 +535,11 @@ def update_pm_location_by_order_name(
         if not skip_sheet_updates:
             sheet_info = _append_order_to_unknown_sheet(normalized_order, normalized_pm, shipment_no)
             if sheet_info:
-                sheet_title, sheet_row, sheet_cell = sheet_info
+                sheet_title, sheet_row, sheet_cell, insert_time_value = sheet_info
                 new_row.sheet_title = sheet_title
                 new_row.sheet_row = sheet_row
                 new_row.sheet_cell = sheet_cell
+                new_row.insert_time = insert_time_value
 
         db.add(new_row)
         db.commit()
