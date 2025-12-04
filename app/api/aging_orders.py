@@ -56,6 +56,7 @@ def update_pm_location(
         pm_value=payload.pm_location,
         created=result.created,
         shipment_no=result.shipment_no,
+        insert_time_value=result.insert_time,
     )
 
     return {

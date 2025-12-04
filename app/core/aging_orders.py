@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.google import AGING_ORDERS_SPREADSHEET_URL, create_gspread_client
 from app.models import AgingOrder
 from app.utils.logging import logger
-from app.utils.time import to_gmt7_iso
+from app.utils.time import TZ_GMT7
 from app.db import SessionLocal
 
 __all__ = [
@@ -58,6 +58,12 @@ class AgingOrderUpdateResult:
     sheet_cell: str | None = None
     sheet_updates_scheduled: bool = False
     created_row_pending_sheet: bool = False
+    insert_time: str | None = None
+
+
+def _current_insert_time() -> str:
+    """Return the current time in GMT+7 formatted as YYYY-MM-DD HH:MM:SS."""
+    return datetime.now(TZ_GMT7).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _normalize_header(value: Any) -> str:
@@ -169,7 +175,7 @@ def _append_order_to_unknown_sheet(order_name: str, pm_value: str, shipment_no: 
         header_index = {header: idx for idx, header in enumerate(normalized_headers)}
 
         row_values = [""] * len(headers)
-        insert_time_value = to_gmt7_iso(datetime.utcnow().replace(microsecond=0)) or ""
+        insert_time_value = _current_insert_time()
 
         def set_value(header_key: str, value: str | None) -> None:
             idx = header_index.get(header_key)
@@ -202,6 +208,7 @@ def run_pm_location_sheet_updates(
     pm_value: str,
     created: bool,
     shipment_no: str | None,
+    insert_time_value: str | None = None,
 ) -> None:
     """Background-friendly wrapper to update/append Aging Orders PM location in Google Sheets."""
     try:
@@ -212,6 +219,8 @@ def run_pm_location_sheet_updates(
 
             if not normalized_order or not normalized_pm:
                 return
+
+            insert_time_value = insert_time_value or _current_insert_time()
 
             if created and shipment_no:
                 row = (
@@ -249,12 +258,26 @@ def run_pm_location_sheet_updates(
             )
             if not rows:
                 return
-            update_pm_location_in_sheets(rows, normalized_pm, order_name=normalized_order)
+            for row in rows:
+                row.insert_time = insert_time_value
+            db.commit()
+            update_pm_location_in_sheets(
+                rows,
+                normalized_pm,
+                order_name=normalized_order,
+                insert_time_value=insert_time_value,
+            )
     except Exception:  # pragma: no cover
         logger.exception("Background PM Location sheet update failed", extra={"order_name": order_name})
 
 
-def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order_name: str | None = None) -> None:
+def update_pm_location_in_sheets(
+    rows: List[AgingOrder],
+    pm_value: str,
+    *,
+    order_name: str | None = None,
+    insert_time_value: str | None = None,
+) -> None:
     """Best-effort update of PM Location for the given sheet rows.
 
     If the stored row's order_name does not match the target order_name, we search
@@ -266,6 +289,7 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
         logger.warning("Skipping sheet update: missing AGING_ORDERS_SPREADSHEET_URL")
         return
 
+    insert_time_value = insert_time_value or _current_insert_time()
     normalized_target_order = _normalize_text_input(order_name) if order_name else None
     visited_positions: set[Tuple[str, int, int]] = set()
     fallback_needed = False
@@ -276,6 +300,7 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
         sheet_cache: Dict[str, Any] = {}
         pm_col_cache: Dict[str, int] = {}
         order_col_cache: Dict[str, int] = {}
+        insert_time_col_cache: Dict[str, int | None] = {}
 
         for row in rows:
             if not row.sheet_title or not row.sheet_row:
@@ -285,6 +310,7 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
             target_row_index = row.sheet_row
             pm_col = None
             order_col = None
+            insert_time_col: int | None = None
 
             row_order = _normalize_text_input(getattr(row, "order_name", None))
             worksheet = sheet_cache.get(row.sheet_title)
@@ -297,6 +323,7 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
                     continue
 
             pm_col = pm_col_cache.get(row.sheet_title)
+            insert_time_col = insert_time_col_cache.get(row.sheet_title)
             if pm_col is None:
                 try:
                     headers = worksheet.row_values(1)
@@ -304,6 +331,8 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
                     pm_col = normalized_headers.index("pm location") + 1
                     pm_col_cache[row.sheet_title] = pm_col
                     order_col = normalized_headers.index("order name") + 1 if "order name" in normalized_headers else None
+                    insert_time_col = normalized_headers.index("insert time") + 1 if "insert time" in normalized_headers else None
+                    insert_time_col_cache[row.sheet_title] = insert_time_col
                     if order_col:
                         order_col_cache[row.sheet_title] = order_col
                 except ValueError:
@@ -313,6 +342,7 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
                     logger.warning("Failed to read headers for worksheet %s: %s", row.sheet_title, exc)
                     continue
             order_col = order_col_cache.get(row.sheet_title, order_col)
+            insert_time_col = insert_time_col_cache.get(row.sheet_title, insert_time_col)
 
             if normalized_target_order and order_col is None:
                 try:
@@ -320,6 +350,9 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
                     normalized_headers = _normalize_headers(headers)
                     order_col = normalized_headers.index("order name") + 1
                     order_col_cache[row.sheet_title] = order_col
+                    if row.sheet_title not in insert_time_col_cache:
+                        insert_time_col = normalized_headers.index("insert time") + 1 if "insert time" in normalized_headers else None
+                        insert_time_col_cache[row.sheet_title] = insert_time_col
                 except ValueError:
                     logger.warning("Worksheet %s missing Order Name column", row.sheet_title)
                     fallback_needed = True
@@ -354,9 +387,12 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
             try:
                 a1_cell = rowcol_to_a1(target_row_index, pm_col)
                 worksheet.update_acell(a1_cell, pm_value)
+                if insert_time_col:
+                    insert_a1 = rowcol_to_a1(target_row_index, insert_time_col)
+                    worksheet.update_acell(insert_a1, insert_time_value)
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Failed to update PM Location in sheet %s at row %s col %s: %s",
+                    "Failed to update PM Location/insert time in sheet %s at row %s col %s: %s",
                     worksheet.title if worksheet else row.sheet_title,
                     target_row_index,
                     pm_col,
@@ -371,13 +407,26 @@ def update_pm_location_in_sheets(rows: List[AgingOrder], pm_value: str, *, order
                 pos_key = (worksheet.title, row_idx, pm_col)
                 if pos_key in visited_positions:
                     continue
+                insert_time_col = insert_time_col_cache.get(worksheet.title)
+                if worksheet.title not in insert_time_col_cache:
+                    try:
+                        headers = worksheet.row_values(1)
+                        normalized_headers = _normalize_headers(headers)
+                        insert_time_col = normalized_headers.index("insert time") + 1 if "insert time" in normalized_headers else None
+                        insert_time_col_cache[worksheet.title] = insert_time_col
+                    except Exception as exc:  # pragma: no cover
+                        logger.warning("Failed to read headers for worksheet %s during fallback: %s", worksheet.title, exc)
+                        insert_time_col_cache[worksheet.title] = insert_time_col
                 try:
                     a1_cell = rowcol_to_a1(row_idx, pm_col)
                     worksheet.update_acell(a1_cell, pm_value)
+                    if insert_time_col:
+                        insert_a1 = rowcol_to_a1(row_idx, insert_time_col)
+                        worksheet.update_acell(insert_a1, insert_time_value)
                     visited_positions.add(pos_key)
                 except Exception as exc:  # pragma: no cover
                     logger.warning(
-                        "Failed fallback PM Location update in sheet %s at row %s col %s: %s",
+                        "Failed fallback PM Location/insert time update in sheet %s at row %s col %s: %s",
                         worksheet.title,
                         row_idx,
                         pm_col,
@@ -512,6 +561,7 @@ def update_pm_location_by_order_name(
     if not normalized_pm:
         raise ValueError("pm_name is required")
 
+    insert_time_value = _current_insert_time()
     matched_rows = (
         db.query(AgingOrder)
         .filter(func.lower(func.trim(AgingOrder.order_name)) == normalized_order.lower())
@@ -540,6 +590,8 @@ def update_pm_location_by_order_name(
                 new_row.sheet_row = sheet_row
                 new_row.sheet_cell = sheet_cell
                 new_row.insert_time = insert_time_value
+            elif insert_time_value:
+                new_row.insert_time = insert_time_value
 
         db.add(new_row)
         db.commit()
@@ -558,18 +610,25 @@ def update_pm_location_by_order_name(
             sheet_cell=sheet_cell,
             sheet_updates_scheduled=skip_sheet_updates,
             created_row_pending_sheet=skip_sheet_updates,
+            insert_time=new_row.insert_time,
         )
 
     # Update database rows
     now_ts = datetime.utcnow()
     for row in matched_rows:
         row.pm_location = normalized_pm
+        row.insert_time = insert_time_value
         row.updated_at = now_ts
     db.commit()
 
     # Best-effort update to Google Sheets at the stored row/column position
     if not skip_sheet_updates:
-        update_pm_location_in_sheets(matched_rows, normalized_pm, order_name=normalized_order)
+        update_pm_location_in_sheets(
+            matched_rows,
+            normalized_pm,
+            order_name=normalized_order,
+            insert_time_value=insert_time_value,
+        )
 
     updated_count = len(matched_rows)
     logger.info("Updated pm_location for %d aging order rows (order_name=%s)", updated_count, normalized_order)
@@ -582,6 +641,7 @@ def update_pm_location_by_order_name(
         sheet_cell=matched_rows[0].sheet_cell if matched_rows else None,
         sheet_updates_scheduled=skip_sheet_updates,
         created_row_pending_sheet=False,
+        insert_time=insert_time_value,
     )
 
 
