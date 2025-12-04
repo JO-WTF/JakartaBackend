@@ -17,9 +17,13 @@ def create_pm(payload: PMCreate, db: Session = Depends(get_db)):
     """Create a PM entry."""
     pm_name_value = payload.pm_name
 
-    pm = crud.create_pm(db, pm_name=pm_name_value, lng=payload.lng, lat=payload.lat)
+    pm = crud.create_pm(db, pm_name=pm_name_value, lng=payload.lng, lat=payload.lat, address=payload.address)
     created = pm and pm.pm_name.lower() == pm_name_value.lower()
-    return {"ok": True, "created": created, "pm": {"id": pm.id, "pm_name": pm.pm_name, "lng": pm.lng, "lat": pm.lat}}
+    return {
+        "ok": True,
+        "created": created,
+        "pm": {"id": pm.id, "pm_name": pm.pm_name, "lng": pm.lng, "lat": pm.lat, "address": pm.address},
+    }
 
 
 @router.delete("/delete-pm")
@@ -42,7 +46,10 @@ def list_pm(db: Session = Depends(get_db)):
     from app.models import PM
 
     items = db.query(PM).order_by(PM.pm_name.asc()).all()
-    result = [{"id": pm.id, "pm_name": pm.pm_name, "lng": pm.lng, "lat": pm.lat} for pm in items]
+    result = [
+        {"id": pm.id, "pm_name": pm.pm_name, "lng": pm.lng, "lat": pm.lat, "address": pm.address}
+        for pm in items
+    ]
     return {"ok": True, "total": len(result), "items": result}
 
 

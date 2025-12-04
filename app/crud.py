@@ -510,7 +510,13 @@ def list_dn_by_du_ids(
 # PM / PMInventory helpers
 
 
-def create_pm(db: Session, pm_name: str, lng: str | None = None, lat: str | None = None) -> PM:
+def create_pm(
+    db: Session,
+    pm_name: str,
+    lng: str | None = None,
+    lat: str | None = None,
+    address: str | None = None,
+) -> PM:
     """Create or return existing PM by case-insensitive name."""
     if not pm_name or not isinstance(pm_name, str):
         raise ValueError("pm_name is required")
@@ -524,7 +530,7 @@ def create_pm(db: Session, pm_name: str, lng: str | None = None, lat: str | None
     if existing:
         return existing
 
-    pm = PM(pm_name=name, lng=lng, lat=lat)
+    pm = PM(pm_name=name, lng=lng, lat=lat, address=address)
     db.add(pm)
     db.commit()
     db.refresh(pm)

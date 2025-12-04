@@ -125,6 +125,7 @@ class PM(Base):
     pm_name = Column(String(128), nullable=False, index=True)
     lng = Column(String(32), nullable=True)
     lat = Column(String(32), nullable=True)
+    address = Column(String(255), nullable=True)
 
 
 class StatusDeliveryLspStat(Base):

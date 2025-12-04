@@ -11,6 +11,7 @@ class PMCreate(BaseModel):
     pm_name: str = Field(..., min_length=1)
     lng: Optional[str] = None
     lat: Optional[str] = None
+    address: Optional[str] = None
 
     @validator("pm_name")
     def strip_pm_name(cls, v: str) -> str:
@@ -18,6 +19,13 @@ class PMCreate(BaseModel):
         if not v:
             raise ValueError("pm_name required")
         return v
+
+    @validator("address")
+    def strip_address(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        return v or None
 
 
 class PMDelete(BaseModel):
