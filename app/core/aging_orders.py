@@ -27,7 +27,7 @@ __all__ = [
     "run_pm_location_sheet_updates",
 ]
 
-_EXCLUDED_SHEETS = {"pm location & contact pic"}
+_EXCLUDED_SHEETS = {"pm location & contact pic", "other"}
 
 # Map normalized sheet header -> model field
 _FIELD_MAP: Dict[str, str] = {
