@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 # Regular expression for DN number validation
-DN_RE = re.compile(r"^[A-Za-z]{2,5}\d{11,16}$")
+DN_RE = re.compile(r"^[A-Za-z]{2,5}\d{10,15}$")
 
 # Valid DN statuses
 VALID_STATUSES: tuple[str, ...] = (
