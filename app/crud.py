@@ -303,8 +303,12 @@ def list_dn_records(db: Session, dn_number: str, limit: int = 50) -> List[DNReco
     return q.all()
 
 
-def list_all_dn_records(db: Session) -> List[DNRecord]:
-    return db.query(DNRecord).order_by(DNRecord.created_at.desc(), DNRecord.id.desc()).all()
+def list_all_dn_records(db: Session) -> List[Tuple[DNRecord, DN]]:
+    query = db.query(DNRecord, DN) \
+        .join(DN, DNRecord.dn_number == DN.dn_number, isouter=True) \
+        .order_by(DNRecord.created_at.desc(), DNRecord.id.desc())
+    # 执行查询，获取所有结果
+    return query.all()
 
 
 def search_dn_records(

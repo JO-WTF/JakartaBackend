@@ -366,25 +366,33 @@ def list_early_bird_dn(
 
 @router.get("/records")
 def get_all_dn_records(db: Session = Depends(get_db)):
-    items = list_all_dn_records(db)
+    db_result_list = list_all_dn_records(db)
+    res_items = []
+    for dn_record, dn_info in db_result_list:
+        item_dict = {
+            "id": dn_record.id,
+            "dn_number": dn_record.dn_number,
+            "status_delivery": getattr(dn_record, "status_delivery", None),
+            "status_site": getattr(dn_record, "status_site", None),
+            "remark": dn_record.remark,
+            "photo_url": dn_record.photo_url,
+            "lng": dn_record.lng,
+            "lat": dn_record.lat,
+            "updated_by": dn_record.updated_by,
+            "created_at": to_gmt7_iso(dn_record.created_at),
+            # DN 信息
+            "du_id": getattr(dn_info, "du_id", None) if dn_info else None,
+            "region": getattr(dn_info, "region", None) if dn_info else None,
+            "lsp": getattr(dn_info, "lsp", None) if dn_info else None,
+            "plan_mos_date": getattr(dn_info, "plan_mos_date", None) if dn_info else None,
+            "area": getattr(dn_info, "area", None) if dn_info else None,
+            "project_request": getattr(dn_info, "project_request", None) if dn_info else None,
+        }
+        res_items.append(item_dict)
     return {
         "ok": True,
-        "total": len(items),
-        "items": [
-            {
-                "id": it.id,
-                "dn_number": it.dn_number,
-                "status_delivery": getattr(it, "status_delivery", None),
-                "status_site": getattr(it, "status_site", None),
-                "remark": it.remark,
-                "photo_url": it.photo_url,
-                "lng": it.lng,
-                "lat": it.lat,
-                "updated_by": it.updated_by,
-                "created_at": to_gmt7_iso(it.created_at),
-            }
-            for it in items
-        ],
+        "total": len(db_result_list),
+        "items": res_items
     }
 
 

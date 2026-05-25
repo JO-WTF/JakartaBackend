@@ -19,6 +19,10 @@ class DNCheckinError(RuntimeError):
 async def create_dn_checkin(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Relay the provided payload to the Huawei DN check-in API."""
 
+    if not settings.dn_checkin_api_switch:
+        logger.warning("DN check-in service api switch is False")
+        raise DNCheckinError("DN check-in service api switch is False")
+
     headers = {
         "X-HW-ID": settings.dn_contacts_hw_id,
         "X-HW-APPKEY": settings.dn_contacts_app_key,
