@@ -15,6 +15,7 @@ JakartaBackend 是一个基于 FastAPI 构建的物流管理系统后端服务�
 - **智能时间戳**: 根据状态自动写入时间戳到 Google Sheet (支持到达/出发场景)
 - **软删除查询**: 支持查询已软删除的记录 (管理员功能)
 - **全局常量管理**: 统一的常量定义，提高代码可维护性
+- **外部接口代理**: 后端代理 Find SG LPN 查询，避免前端 CORS 和浏览器暴露密钥
 
 ## 技术架构
 
@@ -22,6 +23,7 @@ JakartaBackend 是一个基于 FastAPI 构建的物流管理系统后端服务�
 - **Web 框架**: FastAPI 0.116.2 (Python 3.13+)
 - **数据库**: PostgreSQL + SQLAlchemy 2.0.36 ORM
 - **外部集成**: Google Sheets API (gspread)
+- **外部接口代理**: Find SG LPN 华为网关接口
 - **任务调度**: APScheduler (AsyncIO 定时任务)
 - **文件存储**: AWS S3 / 本地文件系统
 - **部署**: Docker 容器化
@@ -341,6 +343,11 @@ AWS_S3_REGION=your_region
 
 # 应用配置
 ALLOWED_ORIGINS=http://localhost:3000,https://your-domain.com
+
+# Find SG LPN 代理
+FIND_SG_LPN_URL=https://apigw-cn-south02.huawei.com/api/app_000000035599/findSgLpnInfos
+FIND_SG_LPN_APPKEY=your-find-sg-lpn-app-key
+FIND_SG_LPN_HW_ID=com.huawei.ipaas.roma.data.subject
 ```
 
 ### 配置类

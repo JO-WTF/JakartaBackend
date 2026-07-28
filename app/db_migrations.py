@@ -85,7 +85,10 @@ def ensure_table_schema(db: Session, table_name: str, model_table: Table) -> Non
         
         # Check if table exists
         if not inspector.has_table(table_name):
-            logger.info("Table %s does not exist, will be created by create_all()", table_name)
+            logger.info("Table %s does not exist, creating from SQLAlchemy model", table_name)
+            model_table.create(bind=db.bind, checkfirst=True)
+            db.commit()
+            logger.info("Created table %s", table_name)
             return
         
         # Get missing columns
@@ -250,9 +253,9 @@ def run_startup_migrations(db: Session) -> None:
     logger.info("Running startup database migrations")
 
     try:
-        # Get all tables from the Base metadata
-        for table_name, table in Base.metadata.tables.items():
-            ensure_table_schema(db, table_name, table)
+        # Get all tables from the Base metadata in dependency order.
+        for table in Base.metadata.sorted_tables:
+            ensure_table_schema(db, table.name, table)
 
         logger.info("Completed startup database migrations")
 
