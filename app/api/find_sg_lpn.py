@@ -29,6 +29,13 @@ def _read_json_response(response) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
+def _upstream_error_detail(exc: BaseException) -> str:
+    reason = getattr(exc, "reason", None)
+    if reason:
+        return f"Find SG LPN upstream request failed: {reason}"
+    return f"Find SG LPN upstream request failed: {exc}"
+
+
 @router.post("")
 def find_sg_lpn_infos(payload: FindSgLpnRequest):
     if not settings.find_sg_lpn_appkey:
@@ -61,7 +68,11 @@ def find_sg_lpn_infos(payload: FindSgLpnRequest):
             error_payload = _read_json_response(exc)
         except (json.JSONDecodeError, UnicodeDecodeError):
             error_payload = {"message": exc.reason}
+        if isinstance(error_payload, dict) and not any(
+            error_payload.get(key) for key in ("errorMsg", "message", "detail")
+        ):
+            error_payload["detail"] = f"Find SG LPN upstream returned HTTP {exc.code}: {exc.reason}"
         return JSONResponse(status_code=exc.code, content=error_payload)
     except (URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         logger.warning("Find SG LPN upstream request failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Find SG LPN upstream request failed") from exc
+        raise HTTPException(status_code=502, detail=_upstream_error_detail(exc)) from exc
