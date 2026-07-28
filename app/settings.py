@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     dn_contacts_hw_id: str = os.getenv("DN_CONTACTS_HW_ID", "")
     dn_contacts_app_key: str = os.getenv("DN_CONTACTS_APP_KEY", "")
     dn_contacts_timeout: float = float(os.getenv("DN_CONTACTS_TIMEOUT", "10"))
+    find_sg_lpn_url: str = os.getenv(
+        "FIND_SG_LPN_URL",
+        "https://apigw-cn-south02.huawei.com/api/app_000000035599/findSgLpnInfos",
+    )
+    find_sg_lpn_hw_id: str = os.getenv("FIND_SG_LPN_HW_ID", "com.huawei.ipaas.roma.data.subject")
+    find_sg_lpn_appkey: str = os.getenv("FIND_SG_LPN_APPKEY", "")
+    find_sg_lpn_timeout_seconds: int = int(os.getenv("FIND_SG_LPN_TIMEOUT_SECONDS", "15"))
 
     @field_validator("allowed_origins", mode="after")
     @classmethod
@@ -49,7 +56,6 @@ class Settings(BaseSettings):
             parsed = [str(part).strip() for part in value if str(part).strip()]
             return parsed or ["*"]
         return value
-
 
 settings = Settings()
 

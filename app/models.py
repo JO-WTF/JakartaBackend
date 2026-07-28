@@ -83,6 +83,22 @@ class DNRecord(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class CheckResult(Base):
+    __tablename__ = "check_result"
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(String(128), unique=True, index=True, nullable=False)
+    dn_number = Column(String(64), index=True, nullable=False)
+    lsp = Column(String(128), nullable=True)
+    checker_name = Column(String(128), nullable=True)
+    check_time = Column(String(64), nullable=True)
+    status = Column(String(32), nullable=True)
+    box_count = Column(Integer, nullable=True)
+    checked_count = Column(Integer, nullable=True)
+    boxes_json = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class DNSyncLog(Base):
     __tablename__ = "dn_sync_log"
     id = Column(Integer, primary_key=True, index=True)

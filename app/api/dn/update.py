@@ -24,7 +24,7 @@ from app.crud import (
     _ACTIVE_DN_EXPR,
 )
 from app.db import get_db, SessionLocal
-from app.models import DN
+from app.models import CheckResult, DN
 from app.services.dn_checkins import DNCheckinError, create_dn_checkin
 from app.storage import save_file
 from app.utils.string import normalize_dn
@@ -32,6 +32,21 @@ from app.utils.time import TZ_GMT7
 from app.core.sheet import sync_dn_record_to_sheet
 
 router = APIRouter(prefix="/api/dn")
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _current_timestamp_gmt7() -> str:
@@ -258,6 +273,81 @@ async def update_dn(
     )
 
     return {"ok": True, "id": rec.id, "photo": photo_url}
+
+
+@router.post("/check_result")
+@router.post("/dn_checker")
+def upload_check_result(
+    payload: dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    report_id = payload.get("reportId") or payload.get("report_id") or payload.get("id")
+    dn_number = payload.get("dnNumber") or payload.get("dn_number") or payload.get("dn")
+    if not report_id or not dn_number:
+        raise HTTPException(status_code=400, detail="report_id and dn_number are required")
+
+    normalized_dn = normalize_dn(str(dn_number))
+    if not DN_RE.fullmatch(normalized_dn):
+        raise HTTPException(status_code=400, detail="Invalid DN number")
+
+    boxes = payload.get("boxes")
+    metadata = payload.get("metadata")
+    if boxes is not None and not isinstance(boxes, list):
+        raise HTTPException(status_code=400, detail="boxes must be a list")
+    if metadata is not None and not isinstance(metadata, dict):
+        raise HTTPException(status_code=400, detail="metadata must be an object")
+
+    existing = (
+        db.query(CheckResult)
+        .filter(CheckResult.report_id == str(report_id))
+        .one_or_none()
+    )
+
+    if existing is None:
+        record = CheckResult(
+            report_id=str(report_id),
+            dn_number=normalized_dn,
+            lsp=payload.get("lsp"),
+            checker_name=payload.get("checkerName") or payload.get("checker_name"),
+            check_time=payload.get("checkTime") or payload.get("check_time"),
+            status=payload.get("status"),
+            box_count=_coerce_int(payload.get("boxCount")),
+            checked_count=_coerce_int(payload.get("checkedCount")),
+            boxes_json=json.dumps(boxes) if boxes is not None else None,
+            metadata_json=json.dumps(metadata) if metadata is not None else None,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+    else:
+        existing.dn_number = normalized_dn
+        existing.lsp = payload.get("lsp")
+        existing.checker_name = payload.get("checkerName") or payload.get("checker_name")
+        existing.check_time = payload.get("checkTime") or payload.get("check_time")
+        existing.status = payload.get("status")
+        existing.box_count = _coerce_int(payload.get("boxCount"))
+        existing.checked_count = _coerce_int(payload.get("checkedCount"))
+        existing.boxes_json = json.dumps(boxes) if boxes is not None else None
+        existing.metadata_json = json.dumps(metadata) if metadata is not None else None
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+        record = existing
+
+    return {
+        "ok": True,
+        "id": record.id,
+        "report_id": record.report_id,
+        "dn_number": record.dn_number,
+        "lsp": record.lsp,
+        "checker_name": record.checker_name,
+        "status": record.status,
+        "box_count": record.box_count,
+        "checked_count": record.checked_count,
+    }
 
 
 @router.post("/batch_update")
