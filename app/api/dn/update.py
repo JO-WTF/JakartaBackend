@@ -401,7 +401,8 @@ def list_check_results(
 
     if dn_number and dn_number.strip():
         normalized_dn = normalize_dn(dn_number)
-        query = query.filter(CheckResult.dn_number == normalized_dn)
+        if normalized_dn:
+            query = query.filter(CheckResult.dn_number.ilike(f"%{normalized_dn}%"))
 
     total = query.count()
     records = (

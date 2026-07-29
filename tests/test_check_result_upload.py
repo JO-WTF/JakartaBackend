@@ -133,6 +133,33 @@ def test_list_check_results_filters_by_created_date(db_session: Session, client)
     assert data["items"][0]["dn_number"] == "TESTDN12345678"
 
 
+def test_list_check_results_filters_by_partial_dn_number(db_session: Session, client):
+    first = CheckResult(
+        report_id="report-partial-1",
+        dn_number="TESTDN12345678",
+        status="completed",
+        created_at=datetime(2026, 7, 28, 4, 0, tzinfo=timezone.utc),
+    )
+    second = CheckResult(
+        report_id="report-partial-2",
+        dn_number="OTHERDN87654321",
+        status="completed",
+        created_at=datetime(2026, 7, 28, 5, 0, tzinfo=timezone.utc),
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    response = client.get(
+        "/api/dn/check_result",
+        params={"date": "2026-07-28", "dn_number": "123456"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["dn_number"] == "TESTDN12345678"
+
+
 def test_get_check_result_returns_detail_payload(db_session: Session, client):
     record = CheckResult(
         report_id="report-detail-1",
