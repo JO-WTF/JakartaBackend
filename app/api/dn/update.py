@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 import json
-from datetime import datetime
+from datetime import date, datetime, time, timezone
 from app.utils.logging import logger
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.constants import (
@@ -47,6 +47,41 @@ def _coerce_int(value: Any) -> int | None:
         return int(str(value).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _json_loads_or_default(value: str | None, default: Any) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _check_result_created_date_range(value: date | None) -> tuple[datetime, datetime]:
+    local_date = value or datetime.now(TZ_GMT7).date()
+    start = datetime.combine(local_date, time(0, 0, 0), tzinfo=TZ_GMT7)
+    end = datetime.combine(local_date, time(23, 59, 59, 999_999), tzinfo=TZ_GMT7)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _serialize_check_result(record: CheckResult, *, include_details: bool = False) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "id": record.id,
+        "report_id": record.report_id,
+        "dn_number": record.dn_number,
+        "lsp": record.lsp,
+        "checker_name": record.checker_name,
+        "check_time": record.check_time,
+        "status": record.status,
+        "box_count": record.box_count,
+        "checked_count": record.checked_count,
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+    }
+    if include_details:
+        data["boxes"] = _json_loads_or_default(record.boxes_json, [])
+        data["metadata"] = _json_loads_or_default(record.metadata_json, {})
+    return data
 
 
 def _current_timestamp_gmt7() -> str:
@@ -348,6 +383,53 @@ def upload_check_result(
         "box_count": record.box_count,
         "checked_count": record.checked_count,
     }
+
+
+@router.get("/check_result")
+def list_check_results(
+    date_value: date | None = Query(None, alias="date", description="Record created date in YYYY-MM-DD; defaults to today in GMT+7"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    dn_number: str | None = Query(None, description="Optional DN number filter"),
+    db: Session = Depends(get_db),
+):
+    start, end = _check_result_created_date_range(date_value)
+    query = db.query(CheckResult).filter(
+        CheckResult.created_at >= start,
+        CheckResult.created_at <= end,
+    )
+
+    if dn_number and dn_number.strip():
+        normalized_dn = normalize_dn(dn_number)
+        query = query.filter(CheckResult.dn_number == normalized_dn)
+
+    total = query.count()
+    records = (
+        query.order_by(CheckResult.created_at.desc(), CheckResult.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {
+        "ok": True,
+        "date": (date_value or datetime.now(TZ_GMT7).date()).isoformat(),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [_serialize_check_result(record) for record in records],
+    }
+
+
+@router.get("/check_result/{result_id}")
+def get_check_result(
+    result_id: int,
+    db: Session = Depends(get_db),
+):
+    record = db.query(CheckResult).filter(CheckResult.id == result_id).one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Check result not found")
+    return {"ok": True, "item": _serialize_check_result(record, include_details=True)}
 
 
 @router.post("/batch_update")

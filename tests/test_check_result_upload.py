@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -95,3 +96,63 @@ def test_upload_check_result_persists_payload(db_session: Session, client):
     assert stored.checked_count == 1
     assert json.loads(stored.boxes_json)[0]["boxNo"] == "BOX1"
     assert json.loads(stored.metadata_json)["generatedAt"] == "2026-07-28T10:00:00Z"
+
+
+def test_list_check_results_filters_by_created_date(db_session: Session, client):
+    first = CheckResult(
+        report_id="report-list-1",
+        dn_number="TESTDN12345678",
+        lsp="LSP01",
+        checker_name="Alice",
+        check_time="2026-07-28 10:00:00",
+        status="completed",
+        box_count=2,
+        checked_count=2,
+        boxes_json=json.dumps([{"boxNo": "BOX1", "status": "Checked"}]),
+        created_at=datetime(2026, 7, 28, 4, 0, tzinfo=timezone.utc),
+    )
+    second = CheckResult(
+        report_id="report-list-2",
+        dn_number="TESTDN87654321",
+        checker_name="Bob",
+        status="completed",
+        box_count=1,
+        checked_count=1,
+        created_at=datetime(2026, 7, 29, 4, 0, tzinfo=timezone.utc),
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    response = client.get("/api/dn/check_result", params={"date": "2026-07-28"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["total"] == 1
+    assert data["items"][0]["report_id"] == "report-list-1"
+    assert data["items"][0]["dn_number"] == "TESTDN12345678"
+
+
+def test_get_check_result_returns_detail_payload(db_session: Session, client):
+    record = CheckResult(
+        report_id="report-detail-1",
+        dn_number="TESTDN12345678",
+        checker_name="Alice",
+        status="completed",
+        box_count=1,
+        checked_count=1,
+        boxes_json=json.dumps([{"boxNo": "BOX1", "itemNo": "ITEM1", "status": "Checked"}]),
+        metadata_json=json.dumps({"generatedAt": "2026-07-28T10:00:00Z"}),
+    )
+    db_session.add(record)
+    db_session.commit()
+    db_session.refresh(record)
+
+    response = client.get(f"/api/dn/check_result/{record.id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["item"]["report_id"] == "report-detail-1"
+    assert data["item"]["boxes"][0]["boxNo"] == "BOX1"
+    assert data["item"]["metadata"]["generatedAt"] == "2026-07-28T10:00:00Z"
